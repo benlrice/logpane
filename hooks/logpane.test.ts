@@ -102,7 +102,7 @@ function rig($: Engine, on: On): Rig {
       return text
     },
     lines: async () => {
-      const ui = await mountPane($)
+      const ui = await mountPane($, 1000)
       const all = (await ui.findAll({ type: 'Text' })).map(t => t.text).filter(t => !/^(live|ended):/.test(t))
       await ui.unmount()
       return all
@@ -110,14 +110,14 @@ function rig($: Engine, on: On): Rig {
   }
 }
 
-const mountPane = ($: Engine) =>
+const mountPane = ($: Engine, rows = 40) =>
   $.ui.mount({
     plugin: 'logpane',
     surface: 'terminal',
     component: 'Pane',
     props: {} as never,
     requestId: 'logpane',
-    viewport: { columns: 120, rows: 40 },
+    viewport: { columns: 120, rows },
   })
 
 const start = async (r: Rig) => {
@@ -202,8 +202,9 @@ test('keeps the last 300 lines and shows the live header', async ($, on) => {
   expect(await r.buttons()).toEqual(['● build.log'])
   expect(await r.header()).toBe('live: build.log')
   const shown = await r.lines()
+  expect(shown).toHaveLength(300)
+  expect(shown[0]).toBe('line 100')
   expect(shown.at(-1)).toBe('line 399')
-  expect(shown.includes('line 99')).toBe(false)
 })
 
 test('a foreground call keeps the file live until it resolves', async ($, on) => {
@@ -280,11 +281,36 @@ test('/logpane again clears stale files and resets the pin', async ($, on) => {
   await r.call('a > newest.log', true)
   await r.emit('/work/newest.log', 'z\n')
   const ui = await mountPane($)
-  await ui.press({ key: (await ui.findAll({ type: 'Button' }))[1].key! } as never)
+  await ui.press({ key: (await ui.findAll({ type: 'Button' })).find(b => b.props.hotkey === '2')!.key! } as never)
   await ui.unmount()
+  expect(await r.header()).toBe('live: live.log')
   await open(r)
   expect(await r.buttons()).toEqual(['● live.log', '● newest.log'])
   expect(await r.header()).toBe('live: newest.log')
+})
+
+test('a second foreground call to a known file keeps it live too', async ($, on) => {
+  const r = rig($, on)
+  await start(r)
+  await r.call('make > build.log')
+  const held = r.hold('make > build.log')
+  await r.clock.advance(60_000)
+  expect(await r.buttons()).toEqual(['● build.log'])
+  held.release()
+  await held.done
+  await r.clock.advance(21_000)
+  expect(await r.buttons()).toEqual(['○ build.log'])
+})
+
+test('a command that writes no file does not change which file is followed', async ($, on) => {
+  const r = rig($, on)
+  await start(r)
+  await r.call('a > one.log', true)
+  await r.call('a > two.log', true)
+  await r.call('a > one.log', true)
+  expect(await r.header()).toMatch(/one\.log$/)
+  await r.call('ls')
+  expect(await r.header()).toMatch(/one\.log$/)
 })
 
 test('evicts the oldest file at the ninth', async ($, on) => {
@@ -331,6 +357,10 @@ test('minimize and maximize reopen the pane at their sizes and toggle back', asy
   await find('n', true)
   expect(opens.at(-1)).toMatchObject({ rows: 6, columns: 50 })
   expect(await find('n')).toBe('❐')
+  await r.emit('/work/one.log', 'x\n')
+  await open(r)
+  expect(await find('n')).toBe('–')
+  expect(await find('m')).toBe('□')
 })
 
 test('tells the person when the pane cannot be placed', async ($, on) => {
