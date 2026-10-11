@@ -1,0 +1,5 @@
+{
+  "name": "logpane",
+  "owner": { "name": "benlrice" },
+  "plugins": [{ "name": "logpane", "source": "./" }]
+}
