@@ -15,6 +15,16 @@ const files = atom({ plugin: 'logpane', key: 'files' } as const, [])
 const picked = atom({ plugin: 'logpane', key: 'picked' } as const, null)
 const newest = atom({ plugin: 'logpane', key: 'newest' } as const, null)
 const tick = atom({ plugin: 'logpane', key: 'tick' } as const, 0)
+const size = atom({ plugin: 'logpane', key: 'size' } as const, 'normal')
+
+// Pane sizes: inline body rows and docked body columns. Normal leaves both
+// to the engine's default.
+const SIZES = {
+  min: { rows: 6, columns: 50 },
+  normal: {},
+  max: { rows: 40, columns: 120 },
+} as const
+type Size = keyof typeof SIZES
 
 const isLive = (file: Tracked, now: number) =>
   file.foreground > 0 || now - file.lastWriteAt < LIVE_MS
@@ -135,6 +145,7 @@ export const register: Register = on => {
   on('command.run', { command: 'logpane' }, async $ => {
     await dropEnded($)
     await update($, picked, () => null)
+    await update($, size, () => 'normal')
     const opened = await $.ui.open({ id: PANE, title: 'logpane', focus: true, closeOnEscape: true })
 
     return opened.isPlaced ? {} : { text: `logpane: the pane could not be placed. ${opened.reason}` }
@@ -168,6 +179,7 @@ export const register: Register = on => {
     const list = await read($, files)
     const pin = await read($, picked)
     const top = await read($, newest)
+    const level = await read($, size)
     const now = await $.clock.now()
 
     if (list.length === 0) {
@@ -177,10 +189,19 @@ export const register: Register = on => {
     const labels = labelsFor(list.map(file => file.path))
     const shown = list.find(file => file.path === (pin ?? top)) ?? list[list.length - 1]
     const shownLabel = labels[list.indexOf(shown)]
+    const resize = async (target: Size) => {
+      const next: Size = level === target ? 'normal' : target
+      await update($, size, () => next)
+      await $.ui.open({ id: PANE, title: 'logpane', focus: true, closeOnEscape: true, ...SIZES[next] })
+    }
     const room = Math.max(1, (e.viewport?.rows ?? 24) - 4)
 
     return (
       <Box flexDirection="column">
+        <Box justifyContent="flex-end" columnGap={1}>
+          <Button hotkey="n" label={level === 'min' ? '❐' : '–'} onPress={() => resize('min')} />
+          <Button hotkey="m" label={level === 'max' ? '❐' : '□'} onPress={() => resize('max')} />
+        </Box>
         <Box flexWrap="wrap" columnGap={1}>
           {list.map((file, i) => (
             <Button

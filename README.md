@@ -2,6 +2,8 @@
 
 A Claude Code mod: a pane that tails the files your Bash calls write to.
 
+![logpane](docs/logpane.png)
+
 Run a long build through Claude Code with `make > build.log 2>&1` and you can watch `build.log` fill without opening a second terminal.
 
 ## Install
@@ -37,6 +39,7 @@ A background command returns at once, so its file counts as live only while outp
 | --- | --- |
 | Tab / arrows, Enter | move between buttons and press one |
 | 1 to 8 | select the Nth file |
+| n / m | minimize or maximize the pane; press again to restore |
 | Esc | return to the prompt and drop ended files |
 
 The pane follows the newest file until you press a button or a number key, which pins your choice. Running `/logpane` again drops ended files, unpins, and opens focused. Closing the pane drops ended files too; live files survive.

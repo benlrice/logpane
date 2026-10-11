@@ -19,6 +19,7 @@ type Rig = {
   header: () => Promise<string>
   lines: () => Promise<string[]>
   setPlaced: (isPlaced: boolean) => void
+  opens: { rows?: number; columns?: number }[]
 }
 
 function rig($: Engine, on: On): Rig {
@@ -28,12 +29,17 @@ function rig($: Engine, on: On): Rig {
   const queues = new Map<string, { push: (text: string) => void }>()
   const gates: Promise<void>[] = []
   let isPlaced = true
+  const opens: { rows?: number; columns?: number }[] = []
   let holdNext: Promise<void> | null = null
 
   on('session.cwd', () => ({ value: CWD }))
   on('command.register', () => ({ value: { command: 'logpane' } }))
   on('session.start', () => ({ cwd: CWD }))
-  on('ui.open', () => ({ value: isPlaced ? { isPlaced: true as const } : { isPlaced: false as const, reason: 'too narrow' } }))
+  on('ui.open', (_$, e) => {
+    opens.push(e as never)
+
+    return { value: isPlaced ? { isPlaced: true as const } : { isPlaced: false as const, reason: 'too narrow' } }
+  })
   on('ui.close', () => ({ value: undefined }))
   on('tool.call', { tool: 'Bash' }, async () => {
     const gate = holdNext
@@ -70,6 +76,7 @@ function rig($: Engine, on: On): Rig {
       return seen.argv
     },
     clock,
+    opens,
     setPlaced: value => (isPlaced = value),
     emit: async (path, text) => {
       queues.get(path)!.push(text)
@@ -86,7 +93,7 @@ function rig($: Engine, on: On): Rig {
       const ui = await mountPane($)
       const all = await ui.findAll({ type: 'Button' })
       await ui.unmount()
-      return all.map(b => String(b.props.label))
+      return all.filter(b => !['n', 'm'].includes(String(b.props.hotkey))).map(b => String(b.props.label))
     },
     header: async () => {
       const ui = await mountPane($)
@@ -232,7 +239,7 @@ test('follows the newest file until a button pins one', async ($, on) => {
   await r.call('a > two.log', true)
   expect(await r.header()).toMatch(/two\.log$/)
   const ui = await mountPane($)
-  await ui.press({ key: (await ui.findAll({ type: 'Button' }))[0].key! } as never)
+  await ui.press({ key: (await ui.findAll({ type: 'Button' })).find(b => b.props.hotkey === '1')!.key! } as never)
   await ui.unmount()
   expect(await r.header()).toMatch(/one\.log$/)
   await r.call('a > three.log', true)
@@ -245,7 +252,7 @@ test('buttons carry the 1 to 8 hotkeys', async ($, on) => {
   await r.call('a > one.log', true)
   await r.call('a > two.log', true)
   const ui = await mountPane($)
-  const hotkeys = (await ui.findAll({ type: 'Button' })).map(b => b.props.hotkey)
+  const hotkeys = (await ui.findAll({ type: 'Button' })).map(b => b.props.hotkey).filter(k => k !== 'n' && k !== 'm')
   await ui.unmount()
   expect(hotkeys).toEqual(['1', '2'])
 })
@@ -300,6 +307,30 @@ test('shows dir/basename when names collide', async ($, on) => {
   await r.call('a > y/build.log', true)
   await r.call('a > other.log', true)
   expect(await r.buttons()).toEqual(['○ x/build.log', '○ y/build.log', '○ other.log'])
+})
+
+test('minimize and maximize reopen the pane at their sizes and toggle back', async ($, on) => {
+  const r = rig($, on)
+  const { opens } = r
+  await start(r)
+  await r.call('a > one.log', true)
+  const find = async (hotkey: string, act?: boolean) => {
+    const ui = await mountPane($)
+    const b = (await ui.findAll({ type: 'Button' })).find(x => x.props.hotkey === hotkey)!
+    if (act) await ui.press({ key: b.key! } as never)
+    await ui.unmount()
+    return String(b.props.label)
+  }
+  expect(await find('n')).toBe('–')
+  expect(await find('m')).toBe('□')
+  await find('m', true)
+  expect(opens.at(-1)).toMatchObject({ rows: 40, columns: 120 })
+  expect(await find('m')).toBe('❐')
+  await find('m', true)
+  expect(opens.at(-1)?.rows).toBeUndefined()
+  await find('n', true)
+  expect(opens.at(-1)).toMatchObject({ rows: 6, columns: 50 })
+  expect(await find('n')).toBe('❐')
 })
 
 test('tells the person when the pane cannot be placed', async ($, on) => {

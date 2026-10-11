@@ -21,6 +21,8 @@ declare module 'claude-code' {
       newest: string | null
       /** Bumped on a timer so the live and ended markers redraw. */
       tick: number
+      /** The pane's size: minimized, the default, or maximized. */
+      size: 'min' | 'normal' | 'max'
     }
   }
 }
