@@ -1,6 +1,6 @@
 {
   "name": "logpane",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "A pane that tails the files your Bash calls write to, so you can watch long-running output without a second terminal.",
   "types": "./types/index.d.ts"
 }
