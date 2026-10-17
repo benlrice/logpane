@@ -22,6 +22,8 @@ type Rig = {
   opens: { rows?: number; columns?: number }[]
   /** Paths a fake process has open for writing, as lsof reports them. */
   writers: Set<string>
+  /** The paths of each lsof call. */
+  probes: string[][]
   /** Make lsof fail to start, as when it is not installed. */
   noLsof: () => void
   /** A process starts writing to the file; the next probe sees it. */
@@ -40,6 +42,7 @@ function rig($: Engine, on: On): Rig {
   const opens: { rows?: number; columns?: number }[] = []
   let holdNext: Promise<void> | null = null
   const writers = new Set<string>()
+  const probes: string[][] = []
   let hasLsof = true
 
   on('session.cwd', () => ({ value: CWD }))
@@ -61,8 +64,12 @@ function rig($: Engine, on: On): Rig {
   on('process.spawn', async function* (_$, e) {
     if (e.argv[0] === 'lsof') {
       if (!hasLsof) throw new Error('spawn lsof ENOENT')
-      const target = e.argv[e.argv.length - 1]
-      yield { stream: 'stdout' as const, text: writers.has(target) ? 'p1\nf1\naw\n' : 'p2\nf9\nar\n' }
+      const targets = e.argv.slice(e.argv.indexOf('--') + 1)
+      probes.push(targets)
+      yield {
+        stream: 'stdout' as const,
+        text: targets.map(t => `p1\nf1\na${writers.has(t) ? 'w' : 'r'}\nn${t}\n`).join(''),
+      }
 
       return { value: { code: 0 } } as never
     }
@@ -95,6 +102,7 @@ function rig($: Engine, on: On): Rig {
     clock,
     opens,
     writers,
+    probes,
     live: async path => {
       writers.add(path)
       await clock.advance(2_000)
@@ -253,6 +261,8 @@ test('a background call is live only while a process writes to the file', async 
   const r = rig($, on)
   await start(r)
   await r.call('make > build.log', true)
+  expect(await r.buttons()).toEqual(['● build.log'])
+  await r.clock.advance(5_000)
   expect(await r.buttons()).toEqual(['○ build.log'])
   await r.live('/work/build.log')
   expect(await r.buttons()).toEqual(['● build.log'])
@@ -262,12 +272,27 @@ test('a background call is live only while a process writes to the file', async 
   expect(await r.buttons()).toEqual(['○ build.log'])
 })
 
-test('output alone does not make a file live', async ($, on) => {
+test('output without a writer keeps a file live only for a short grace', async ($, on) => {
   const r = rig($, on)
   await start(r)
   await r.call('make > build.log', true)
+  await r.clock.advance(5_000)
   await r.emit('/work/build.log', 'hi\n')
+  expect(await r.buttons()).toEqual(['● build.log'])
+  await r.clock.advance(5_000)
   expect(await r.buttons()).toEqual(['○ build.log'])
+})
+
+test('lsof is called once for all tracked files, and not when none are tracked', async ($, on) => {
+  const r = rig($, on)
+  await start(r)
+  await r.clock.advance(4_000)
+  expect(r.probes).toEqual([])
+  await r.call('a > one.log', true)
+  await r.call('a > two.log', true)
+  r.probes.length = 0
+  await r.clock.advance(2_000)
+  expect(r.probes).toEqual([['/work/one.log', '/work/two.log']])
 })
 
 test('without lsof, recent output stands in for the process', async ($, on) => {
@@ -275,6 +300,7 @@ test('without lsof, recent output stands in for the process', async ($, on) => {
   r.noLsof()
   await start(r)
   await r.call('make > build.log', true)
+  await r.clock.advance(5_000)
   expect(await r.buttons()).toEqual(['○ build.log'])
   await r.emit('/work/build.log', 'hi\n')
   expect(await r.buttons()).toEqual(['● build.log'])
@@ -386,6 +412,7 @@ test('shows dir/basename when names collide', async ($, on) => {
   await r.call('a > x/build.log', true)
   await r.call('a > y/build.log', true)
   await r.call('a > other.log', true)
+  await r.clock.advance(5_000)
   expect(await r.buttons()).toEqual(['○ x/build.log', '○ y/build.log', '○ other.log'])
 })
 
@@ -447,8 +474,10 @@ test('the band appears on the first line and shows only file buttons', async ($,
   const r = rig($, on)
   await start(r)
   await r.call('make > build.log', true)
+  await r.clock.advance(5_000)
   expect(await band($)).toEqual({ buttons: [], texts: [] })
   await r.emit('/work/build.log', 'a\nb\nc\n')
+  await r.live('/work/build.log')
   await r.live('/work/build.log')
   expect(await band($)).toEqual({ buttons: ['1 ● build.log', '✕'], texts: [] })
 })
@@ -510,7 +539,7 @@ test('band shows dir/basename when names collide', async ($, on) => {
   await r.call('a > x/build.log', true)
   await r.call('a > y/build.log', true)
   const held = r.hold('a > other.log')
-  await r.clock.advance(0)
+  await r.clock.advance(5_000)
   expect((await band($)).buttons).toEqual(['1 ○ x/build.log', '2 ○ y/build.log', '3 ● other.log', '✕'])
   held.release()
   await held.done
