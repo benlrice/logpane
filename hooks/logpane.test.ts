@@ -93,7 +93,7 @@ function rig($: Engine, on: On): Rig {
       const ui = await mountPane($)
       const all = await ui.findAll({ type: 'Button' })
       await ui.unmount()
-      return all.filter(b => !['n', 'm'].includes(String(b.props.hotkey))).map(b => String(b.props.label))
+      return all.filter(b => !['m'].includes(String(b.props.hotkey))).map(b => String(b.props.label))
     },
     header: async () => {
       const ui = await mountPane($)
@@ -253,7 +253,7 @@ test('buttons carry the 1 to 8 hotkeys', async ($, on) => {
   await r.call('a > one.log', true)
   await r.call('a > two.log', true)
   const ui = await mountPane($)
-  const hotkeys = (await ui.findAll({ type: 'Button' })).map(b => b.props.hotkey).filter(k => k !== 'n' && k !== 'm')
+  const hotkeys = (await ui.findAll({ type: 'Button' })).map(b => b.props.hotkey).filter(k => k !== 'm')
   await ui.unmount()
   expect(hotkeys).toEqual(['1', '2'])
 })
@@ -335,7 +335,7 @@ test('shows dir/basename when names collide', async ($, on) => {
   expect(await r.buttons()).toEqual(['○ x/build.log', '○ y/build.log', '○ other.log'])
 })
 
-test('minimize and maximize reopen the pane at their sizes and toggle back', async ($, on) => {
+test('maximize reopens the pane at max size and toggles back; no minimize button remains', async ($, on) => {
   const r = rig($, on)
   const { opens } = r
   await start(r)
@@ -347,20 +347,194 @@ test('minimize and maximize reopen the pane at their sizes and toggle back', asy
     await ui.unmount()
     return String(b.props.label)
   }
-  expect(await find('n')).toBe('–')
   expect(await find('m')).toBe('□')
   await find('m', true)
-  expect(opens.at(-1)).toMatchObject({ rows: 40, columns: 120 })
+  expect(opens.at(-1)).toMatchObject({ rows: 52, columns: 156 })
   expect(await find('m')).toBe('❐')
   await find('m', true)
   expect(opens.at(-1)?.rows).toBeUndefined()
-  await find('n', true)
-  expect(opens.at(-1)).toMatchObject({ rows: 6, columns: 50 })
-  expect(await find('n')).toBe('❐')
-  await r.emit('/work/one.log', 'x\n')
-  await open(r)
-  expect(await find('n')).toBe('–')
+  const ui = await mountPane($)
+  expect((await ui.findAll({ type: 'Button' })).some(b => b.props.hotkey === 'n')).toBe(false)
+  await ui.unmount()
   expect(await find('m')).toBe('□')
+})
+
+const mountBand = ($: Engine, props: { hasSurvey?: boolean; maxRows?: number } = {}) =>
+  $.ui.mount({
+    plugin: 'logpane',
+    surface: 'terminal',
+    component: 'AbovePrompt',
+    props: { hasSurvey: false, isWorking: false, maxRows: 20, ...props } as never,
+    viewport: { columns: 120, rows: 40 },
+  })
+
+// A hidden band yields with next(e); with nothing beneath, the test engine refuses the mount.
+const band = async ($: Engine, props?: { hasSurvey?: boolean; maxRows?: number }) => {
+  const ui = await mountBand($, props).catch(error => {
+    if (String(error).includes('no implementation for ui.render')) return null
+    throw error
+  })
+  if (!ui) return { buttons: [], texts: [] }
+  const buttons = (await ui.findAll({ type: 'Button' })).map(b => String(b.props.label))
+  const texts = (await ui.findAll({ type: 'Text' })).map(t => t.text)
+  await ui.unmount()
+  return { buttons, texts }
+}
+
+const pressBand = async ($: Engine, match: (b: { props: Record<string, unknown> }) => boolean) => {
+  const ui = await mountBand($)
+  const b = (await ui.findAll({ type: 'Button' })).find(match as never)!
+  await ui.press({ key: b.key! } as never)
+  await ui.unmount()
+}
+const byLabel = (label: string) => (b: { props: Record<string, unknown> }) => b.props.label === label
+
+test('the band appears on the first line and shows only file buttons', async ($, on) => {
+  const r = rig($, on)
+  await start(r)
+  await r.call('make > build.log', true)
+  expect(await band($)).toEqual({ buttons: [], texts: [] })
+  await r.emit('/work/build.log', 'a\nb\nc\n')
+  expect(await band($)).toEqual({ buttons: ['1 ● build.log', '✕'], texts: [] })
+})
+
+test('the band shows for a foreground call and stays while it runs', async ($, on) => {
+  const r = rig($, on)
+  await start(r)
+  const held = r.hold('make > build.log')
+  await r.clock.advance(60_000)
+  expect((await band($)).buttons).toEqual(['1 ● build.log', '✕'])
+  held.release()
+  await held.done
+  await r.clock.advance(21_000)
+  expect(await band($)).toEqual({ buttons: [], texts: [] })
+})
+
+test('the band hides after the live window and files stay tracked', async ($, on) => {
+  const r = rig($, on)
+  await start(r)
+  await r.call('make > build.log', true)
+  await r.emit('/work/build.log', 'a\n')
+  await r.clock.advance(21_000)
+  expect(await band($)).toEqual({ buttons: [], texts: [] })
+  expect(await r.buttons()).toEqual(['○ build.log'])
+})
+
+test('the band yields to a survey and to a zero-row allowance', async ($, on) => {
+  const r = rig($, on)
+  await start(r)
+  await r.call('make > build.log', true)
+  await r.emit('/work/build.log', 'a\n')
+  expect(await band($, { hasSurvey: true })).toEqual({ buttons: [], texts: [] })
+  expect(await band($, { maxRows: 0 })).toEqual({ buttons: [], texts: [] })
+  expect((await band($, { maxRows: 1 })).buttons).toEqual(['1 ● build.log', '✕'])
+})
+
+test('band buttons mark live and ended and carry the 1 to 8 hotkeys', async ($, on) => {
+  const r = rig($, on)
+  await start(r)
+  await r.call('a > one.log', true)
+  await r.emit('/work/one.log', 'first\n')
+  await r.clock.advance(30_000)
+  await r.call('a > two.log', true)
+  await r.emit('/work/two.log', 'second\n')
+  expect((await band($)).buttons).toEqual(['1 ○ one.log', '2 ● two.log', '✕'])
+  const ui = await mountBand($)
+  const hotkeys = (await ui.findAll({ type: 'Button' })).map(b => b.props.hotkey).filter(Boolean)
+  await ui.unmount()
+  expect(hotkeys).toEqual(['1', '2'])
+})
+
+test('band shows dir/basename when names collide', async ($, on) => {
+  const r = rig($, on)
+  await start(r)
+  await r.call('a > x/build.log', true)
+  await r.call('a > y/build.log', true)
+  const held = r.hold('a > other.log')
+  await r.clock.advance(0)
+  expect((await band($)).buttons).toEqual(['1 ○ x/build.log', '2 ○ y/build.log', '3 ● other.log', '✕'])
+  held.release()
+  await held.done
+})
+
+test('pressing a band file opens the pane at normal size on that file and hides the band', async ($, on) => {
+  const r = rig($, on)
+  await start(r)
+  await r.call('a > one.log', true)
+  await r.emit('/work/one.log', 'first\n')
+  await r.call('a > two.log', true)
+  await r.emit('/work/two.log', 'second\n')
+  await pressBand($, byLabel('1 ● one.log'))
+  expect(r.opens.at(-1)).toMatchObject({ id: 'logpane', focus: true, closeOnEscape: true })
+  expect(r.opens.at(-1)?.rows).toBeUndefined()
+  expect(await r.header()).toBe('live: one.log')
+  expect(await band($)).toEqual({ buttons: [], texts: [] })
+})
+
+test('/logpane hides the band', async ($, on) => {
+  const r = rig($, on)
+  await start(r)
+  await r.call('make > build.log', true)
+  await r.emit('/work/build.log', 'a\n')
+  await open(r)
+  expect(await band($)).toEqual({ buttons: [], texts: [] })
+})
+
+test('closing the pane returns to the band when a file is live', { plugins: [closer] }, async ($, on) => {
+  const r = rig($, on)
+  await start(r)
+  await r.call('make > build.log', true)
+  await r.emit('/work/build.log', 'a\n')
+  await open(r)
+  await esc(r)
+  expect((await band($)).buttons).toEqual(['1 ● build.log', '✕'])
+})
+
+test('closing the pane with no live file shows no band', { plugins: [closer] }, async ($, on) => {
+  const r = rig($, on)
+  await start(r)
+  await r.call('make > build.log', true)
+  await r.emit('/work/build.log', 'a\n')
+  await open(r)
+  await r.clock.advance(30_000)
+  await esc(r)
+  expect(await band($)).toEqual({ buttons: [], texts: [] })
+})
+
+test('pressing a band file keeps the band when the pane cannot be placed', async ($, on) => {
+  const r = rig($, on)
+  await start(r)
+  await r.call('make > build.log', true)
+  await r.emit('/work/build.log', 'a\n')
+  r.setPlaced(false)
+  await pressBand($, byLabel('1 ● build.log'))
+  expect((await band($)).buttons).toEqual(['1 ● build.log', '✕'])
+})
+
+test('dismiss hides the band until a file goes from ended to live', async ($, on) => {
+  const r = rig($, on)
+  await start(r)
+  await r.call('a > one.log', true)
+  await r.emit('/work/one.log', 'x\n')
+  await pressBand($, byLabel('✕'))
+  expect(await band($)).toEqual({ buttons: [], texts: [] })
+  await r.emit('/work/one.log', 'y\n')
+  expect(await band($)).toEqual({ buttons: [], texts: [] })
+  expect(await r.buttons()).toEqual(['● one.log'])
+  await r.clock.advance(30_000)
+  await r.emit('/work/one.log', 'z\n')
+  expect((await band($)).buttons).toEqual(['1 ● one.log', '✕'])
+})
+
+test('dismiss: a new Bash call that attaches a file brings the band back', async ($, on) => {
+  const r = rig($, on)
+  await start(r)
+  await r.call('a > one.log', true)
+  await r.emit('/work/one.log', 'x\n')
+  await pressBand($, byLabel('✕'))
+  await r.call('a > two.log', true)
+  await r.emit('/work/two.log', 'w\n')
+  expect((await band($)).buttons).toEqual(['1 ● one.log', '2 ● two.log', '✕'])
 })
 
 test('tells the person when the pane cannot be placed', async ($, on) => {

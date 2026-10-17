@@ -16,13 +16,14 @@ const picked = atom({ plugin: 'logpane', key: 'picked' } as const, null)
 const newest = atom({ plugin: 'logpane', key: 'newest' } as const, null)
 const tick = atom({ plugin: 'logpane', key: 'tick' } as const, 0)
 const size = atom({ plugin: 'logpane', key: 'size' } as const, 'normal')
+const dismissed = atom({ plugin: 'logpane', key: 'dismissed' } as const, false)
+const paneOpen = atom({ plugin: 'logpane', key: 'paneOpen' } as const, false)
 
 // Pane sizes: inline body rows and docked body columns. Normal leaves both
 // to the engine's default.
 const SIZES = {
-  min: { rows: 6, columns: 50 },
   normal: {},
-  max: { rows: 40, columns: 120 },
+  max: { rows: 52, columns: 156 },
 } as const
 type Size = keyof typeof SIZES
 
@@ -30,6 +31,12 @@ const isLive = (file: Tracked, now: number) =>
   file.foreground > 0 || now - file.lastWriteAt < LIVE_MS
 
 type Env = Engine
+
+const shownIndex = (list: Tracked[], pin: string | null, top: string | null) => {
+  const found = list.findIndex(file => file.path === (pin ?? top))
+
+  return found === -1 ? list.length - 1 : found
+}
 
 let isTicking = false
 const tails = new Map<string, { return: (value: never) => unknown }>()
@@ -58,13 +65,17 @@ function startTail($: Env, path: string) {
         if (parts.length === 0) continue
         const now = await $.clock.now()
         const lines = parts.map(cleanLine)
-        await update($, files, list =>
-          list.map(file =>
+        let wentLive = false
+        await update($, files, list => {
+          wentLive = list.some(file => file.path === path && !isLive(file, now))
+
+          return list.map(file =>
             file.path === path
               ? { ...file, lines: [...file.lines, ...lines].slice(-KEEP_LINES), lastWriteAt: now }
               : file,
-          ),
-        )
+          )
+        })
+        if (wentLive) await update($, dismissed, () => false)
       }
     } catch {
       // tail could not start or was killed with the pane's file; nothing to show
@@ -102,6 +113,7 @@ async function attach($: Env, paths: string[], isForeground: boolean) {
   for (const path of evicted) stopTail(path)
   if (evicted.length > 0) await update($, picked, current => (current && evicted.includes(current) ? null : current))
   await update($, newest, () => paths[paths.length - 1] ?? null)
+  await update($, dismissed, () => false)
   for (const path of paths) if (!evicted.includes(path)) startTail($, path)
 }
 
@@ -111,6 +123,13 @@ function detach($: Env, paths: string[]) {
       paths.includes(file.path) ? { ...file, foreground: Math.max(0, file.foreground - 1) } : file,
     ),
   )
+}
+
+async function openPane($: Env, extra: { rows?: number; columns?: number } = {}) {
+  const opened = await $.ui.open({ id: PANE, title: 'logpane', focus: true, closeOnEscape: true, ...extra })
+  if (opened.isPlaced) await update($, paneOpen, () => true)
+
+  return opened
 }
 
 async function dropEnded($: Env) {
@@ -146,7 +165,7 @@ export const register: Register = on => {
     await dropEnded($)
     await update($, picked, () => null)
     await update($, size, () => 'normal')
-    const opened = await $.ui.open({ id: PANE, title: 'logpane', focus: true, closeOnEscape: true })
+    const opened = await openPane($)
 
     return opened.isPlaced ? {} : { text: `logpane: the pane could not be placed. ${opened.reason}` }
   })
@@ -168,7 +187,10 @@ export const register: Register = on => {
   })
 
   on('ui.close', async ($, e, next) => {
-    if (e.id === PANE) await dropEnded($)
+    if (e.id === PANE) {
+      await update($, paneOpen, () => false)
+      await dropEnded($)
+    }
 
     return next(e)
   })
@@ -187,19 +209,19 @@ export const register: Register = on => {
     }
 
     const labels = labelsFor(list.map(file => file.path))
-    const shown = list.find(file => file.path === (pin ?? top)) ?? list[list.length - 1]
-    const shownLabel = labels[list.indexOf(shown)]
+    const shownAt = shownIndex(list, pin, top)
+    const shown = list[shownAt]
+    const shownLabel = labels[shownAt]
     const resize = async (target: Size) => {
       const next: Size = level === target ? 'normal' : target
       await update($, size, () => next)
-      await $.ui.open({ id: PANE, title: 'logpane', focus: true, closeOnEscape: true, ...SIZES[next] })
+      await openPane($, SIZES[next])
     }
     const room = Math.max(1, (e.viewport?.rows ?? 24) - 4)
 
     return (
       <Box flexDirection="column">
         <Box justifyContent="flex-end" columnGap={1}>
-          <Button hotkey="n" label={level === 'min' ? '❐' : '–'} onPress={() => resize('min')} />
           <Button hotkey="m" label={level === 'max' ? '❐' : '□'} onPress={() => resize('max')} />
         </Box>
         <Box flexWrap="wrap" columnGap={1}>
@@ -219,6 +241,42 @@ export const register: Register = on => {
         {shown.lines.slice(-room).map((line, i) => (
           <Text key={i} wrap="truncate-end">{line}</Text>
         ))}
+      </Box>
+    )
+  })
+
+  on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
+    const list = await read($, files)
+    const isHidden = await read($, dismissed)
+    const isOpen = await read($, paneOpen)
+    await read($, tick)
+    const now = await $.clock.now()
+
+    if (e.props.hasSurvey || isHidden || isOpen || e.props.maxRows < 1 || !list.some(file => isLive(file, now))) return next(e)
+
+    const { Box, Button } = $.ui.resolve(e)
+    const labels = labelsFor(list.map(file => file.path))
+    const show = async (path: string) => {
+      const previous = await read($, picked)
+      await update($, picked, () => path)
+      await update($, size, () => 'normal')
+      const opened = await openPane($)
+      if (!opened.isPlaced) await update($, picked, () => previous)
+    }
+
+    return (
+      <Box justifyContent="space-between">
+        <Box flexWrap="wrap" columnGap={1}>
+          {list.map((file, i) => (
+            <Button
+              key={file.path}
+              hotkey={String(i + 1)}
+              label={`${i + 1} ${isLive(file, now) ? '●' : '○'} ${labels[i]}`}
+              onPress={() => show(file.path)}
+            />
+          ))}
+        </Box>
+        <Button key="dismiss" label="✕" onPress={() => update($, dismissed, () => true)} />
       </Box>
     )
   })

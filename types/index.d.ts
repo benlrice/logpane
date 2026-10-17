@@ -21,8 +21,12 @@ declare module 'claude-code' {
       newest: string | null
       /** Bumped on a timer so the live and ended markers redraw. */
       tick: number
-      /** The pane's size: minimized, the default, or maximized. */
-      size: 'min' | 'normal' | 'max'
+      /** The pane's size: the default, or maximized. */
+      size: 'normal' | 'max'
+      /** True after the person hides the band, until a file goes live again. */
+      dismissed: boolean
+      /** True while the pane is open; the band hides then. */
+      paneOpen: boolean
     }
   }
 }

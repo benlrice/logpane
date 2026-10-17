@@ -1,6 +1,6 @@
 # logpane
 
-logpane is a Claude Code mod. It adds a pane that shows the files that your Bash commands write to.
+logpane is a Claude Code mod. It shows the files that your Bash commands write to. A band above the prompt lists the files. A pane shows the lines of one file.
 
 ![logpane](docs/logpane.png)
 
@@ -26,7 +26,19 @@ Enter `y` to add the marketplace. Then select a scope.
 
 logpane starts when the session starts. Before each Bash command runs, logpane reads the command. It finds the files that the command writes output to. Then it watches these files.
 
-To open the pane, enter `/logpane`. The pane does not open by itself.
+### The band
+
+The band opens by itself when a watched file goes live. It is one row above the prompt. It has one button for each watched file, for example `1 ● build.log  2 ○ test.log`, and a `✕` button.
+
+- To open the pane on a file, click its button, or press its number key.
+- The number keys work when the band has the keyboard. Press `ctrl+x`, then `Tab`, or click the band.
+- To hide the band, press `✕`. The band stays hidden until a watched file goes live again, or until a new Bash command writes to a file.
+- The band hides when no watched file is live.
+- The band and the pane are never on screen together. When you close the pane and a file is live, the band comes back.
+
+### The pane
+
+The pane opens when you press a file button in the band, or when you enter `/logpane`. The pane never opens by itself.
 
 The pane has these parts:
 
@@ -47,8 +59,8 @@ A background command returns at once. Its file is live only while new output arr
 | --- | --- |
 | Tab or arrow keys, then Enter | Move between the buttons. Press a button. |
 | 1 to 8 | Select the file with that number. |
-| n or m | Minimize or maximize the pane. Press the key again to restore the pane. |
-| Esc | Give the keyboard back to the prompt. Remove the ended files. |
+| m | Maximize the pane. Press the key again to restore the pane. |
+| Esc | Close the pane. Remove the ended files. The band comes back if a file is live. |
 
 The pane shows the newest file. When you press a button or a number key, the pane keeps your selection.
 
@@ -86,7 +98,7 @@ logpane resolves a relative path from the working directory of the session. It u
 - logpane starts each file from its last 200 lines. It keeps the last 300 lines.
 - logpane reads only the redirects in the command text. It does not follow these items: files that a program opens by itself, shell variables, globs, `cd` in a compound command, and command substitutions.
 - logpane decides live or ended from the output of the file. It does not check if a process runs.
-- logpane has no scrollback past 300 lines, no search and no filter. It has no automatic open, no status-line hint and no settings.
+- logpane has no scrollback past 300 lines, no search and no filter. It has no automatic open of the pane, no status-line hint and no settings.
 
 ## Development
 
