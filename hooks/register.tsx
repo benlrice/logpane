@@ -56,13 +56,15 @@ const partial = new Map<string, string>()
 async function probeWriters($: Env, paths: string[]): Promise<Set<string> | null> {
   const writers = new Set<string>()
   let out = ''
+  const run = $.process.spawn({ argv: ['lsof', '-Fan', '--', ...paths] })
   try {
-    for await (const { stream, text } of $.process.spawn({ argv: ['lsof', '-Fan', '--', ...paths] })) {
-      if (stream === 'stdout') out += text
-    }
-  } catch (error) {
-    if (/ENOENT|EACCES|not found/i.test(String(error))) return null
+    for await (const { stream, text } of run) if (stream === 'stdout') out += text
+  } catch {
+    return null
   }
+  // Exit 0 lists writers; exit 1 is lsof's answer for no open files. Anything else is a failure.
+  const exit = await run.result.catch(() => null)
+  if (exit?.code !== 0 && exit?.code !== 1) return null
 
   let access = ''
   for (const line of out.split('\n')) {

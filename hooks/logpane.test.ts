@@ -22,6 +22,8 @@ type Rig = {
   opens: { rows?: number; columns?: number }[]
   /** Paths a fake process has open for writing, as lsof reports them. */
   writers: Set<string>
+  /** Paths a fake process has open for reading and writing. */
+  updaters: Set<string>
   /** The paths of each lsof call. */
   probes: string[][]
   /** Make lsof fail to start, as when it is not installed. */
@@ -42,6 +44,7 @@ function rig($: Engine, on: On): Rig {
   const opens: { rows?: number; columns?: number }[] = []
   let holdNext: Promise<void> | null = null
   const writers = new Set<string>()
+  const updaters = new Set<string>()
   const probes: string[][] = []
   let hasLsof = true
 
@@ -68,7 +71,7 @@ function rig($: Engine, on: On): Rig {
       probes.push(targets)
       yield {
         stream: 'stdout' as const,
-        text: targets.map(t => `p1\nf1\na${writers.has(t) ? 'w' : 'r'}\nn${t}\n`).join(''),
+        text: targets.map(t => `p1\nf1\na${updaters.has(t) ? 'u' : writers.has(t) ? 'w' : 'r'}\nn${t}\n`).join(''),
       }
 
       return { value: { code: 0 } } as never
@@ -102,6 +105,7 @@ function rig($: Engine, on: On): Rig {
     clock,
     opens,
     writers,
+    updaters,
     probes,
     live: async path => {
       writers.add(path)
@@ -304,7 +308,9 @@ test('without lsof, recent output stands in for the process', async ($, on) => {
   expect(await r.buttons()).toEqual(['○ build.log'])
   await r.emit('/work/build.log', 'hi\n')
   expect(await r.buttons()).toEqual(['● build.log'])
-  await r.clock.advance(21_000)
+  await r.clock.advance(15_000)
+  expect(await r.buttons()).toEqual(['● build.log'])
+  await r.clock.advance(6_000)
   expect(await r.buttons()).toEqual(['○ build.log'])
 })
 
@@ -657,4 +663,81 @@ test('tracking runs without /logpane having been run', async ($, on) => {
   await start(r)
   await r.call('make > a.log')
   expect(r.spawned).toEqual(['/work/a.log'])
+})
+
+test('a process with the file open for reading and writing keeps it live', async ($, on) => {
+  const r = rig($, on)
+  await start(r)
+  await r.call('make > build.log', true)
+  r.updaters.add('/work/build.log')
+  await r.clock.advance(60_000)
+  expect(await r.buttons()).toEqual(['● build.log'])
+})
+
+test('a process that only reads the file does not keep it live', async ($, on) => {
+  const r = rig($, on)
+  await start(r)
+  await r.call('make > build.log', true)
+  await r.clock.advance(60_000)
+  expect(await r.buttons()).toEqual(['○ build.log'])
+})
+
+test('a dismissed band returns when lsof shows a writer on an ended file', async ($, on) => {
+  const r = rig($, on)
+  await start(r)
+  await r.call('a > one.log', true)
+  await r.live('/work/one.log')
+  await pressBand($, byLabel('✕'))
+  expect(await band($)).toEqual({ buttons: [], texts: [] })
+  await r.end('/work/one.log')
+  await r.clock.advance(10_000)
+  expect(await r.buttons()).toEqual(['○ one.log'])
+  await r.live('/work/one.log')
+  expect((await band($)).buttons).toEqual(['1 ● one.log', '✕'])
+})
+
+test('a band file press resets a maximized pane to normal size', { plugins: [closer] }, async ($, on) => {
+  const r = rig($, on)
+  await start(r)
+  await r.call('a > one.log', true)
+  await r.live('/work/one.log')
+  await open(r)
+  const ui = await mountPane($)
+  await ui.press({ key: (await ui.findAll({ type: 'Button' })).find(b => b.props.hotkey === 'm')!.key! } as never)
+  await ui.unmount()
+  expect(r.opens.at(-1)?.rows).toBe(52)
+  await esc(r)
+  await pressBand($, byLabel('1 ● one.log'))
+  const pane = await mountPane($)
+  const label = String((await pane.findAll({ type: 'Button' })).find(b => b.props.hotkey === 'm')!.props.label)
+  await pane.unmount()
+  expect(label).toBe('□')
+})
+
+test('a band file press that cannot place the pane keeps the earlier selection', async ($, on) => {
+  const r = rig($, on)
+  await start(r)
+  await r.call('a > one.log', true)
+  await r.call('a > two.log', true)
+  await r.live('/work/one.log')
+  await r.live('/work/two.log')
+  expect(await r.header()).toBe('live: two.log')
+  r.setPlaced(false)
+  await pressBand($, byLabel('1 ● one.log'))
+  expect(await r.header()).toBe('live: two.log')
+})
+
+test('one of two foreground calls to a file ending leaves the other live', async ($, on) => {
+  const r = rig($, on)
+  await start(r)
+  const first = r.hold('make > build.log')
+  await r.clock.advance(0)
+  const second = r.hold('make > build.log')
+  await r.clock.advance(60_000)
+  first.release()
+  await first.done
+  await r.clock.advance(60_000)
+  expect(await r.buttons()).toEqual(['● build.log'])
+  second.release()
+  await second.done
 })
