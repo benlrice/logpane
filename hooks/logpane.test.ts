@@ -20,6 +20,16 @@ type Rig = {
   lines: () => Promise<string[]>
   setPlaced: (isPlaced: boolean) => void
   opens: { rows?: number; columns?: number }[]
+  /** Paths a fake process has open for writing, as lsof reports them. */
+  writers: Set<string>
+  /** The paths of each lsof call. */
+  probes: string[][]
+  /** Make lsof fail to start, as when it is not installed. */
+  noLsof: () => void
+  /** A process starts writing to the file; the next probe sees it. */
+  live: (path: string) => Promise<void>
+  /** The process writing to the file exits. */
+  end: (path: string) => Promise<void>
 }
 
 function rig($: Engine, on: On): Rig {
@@ -31,6 +41,9 @@ function rig($: Engine, on: On): Rig {
   let isPlaced = true
   const opens: { rows?: number; columns?: number }[] = []
   let holdNext: Promise<void> | null = null
+  const writers = new Set<string>()
+  const probes: string[][] = []
+  let hasLsof = true
 
   on('session.cwd', () => ({ value: CWD }))
   on('command.register', () => ({ value: { command: 'logpane' } }))
@@ -49,6 +62,17 @@ function rig($: Engine, on: On): Rig {
     return { result: { stdout: '', stderr: '', interrupted: false }, text: 'ok', isReadOnly: false } as never
   })
   on('process.spawn', async function* (_$, e) {
+    if (e.argv[0] === 'lsof') {
+      if (!hasLsof) throw new Error('spawn lsof ENOENT')
+      const targets = e.argv.slice(e.argv.indexOf('--') + 1)
+      probes.push(targets)
+      yield {
+        stream: 'stdout' as const,
+        text: targets.map(t => `p1\nf1\na${writers.has(t) ? 'w' : 'r'}\nn${t}\n`).join(''),
+      }
+
+      return { value: { code: 0 } } as never
+    }
     const path = e.argv[e.argv.length - 1]
     spawned.push(path)
     seen.argv = e.argv
@@ -77,6 +101,17 @@ function rig($: Engine, on: On): Rig {
     },
     clock,
     opens,
+    writers,
+    probes,
+    live: async path => {
+      writers.add(path)
+      await clock.advance(2_000)
+    },
+    end: async path => {
+      writers.delete(path)
+      await clock.advance(2_000)
+    },
+    noLsof: () => (hasLsof = false),
     setPlaced: value => (isPlaced = value),
     emit: async (path, text) => {
       queues.get(path)!.push(text)
@@ -189,6 +224,7 @@ test('/logpane opens a focused pane listing live files', async ($, on) => {
   await start(r)
   await r.call('make > build.log', true)
   await r.emit('/work/build.log', 'hi\n')
+  await r.live('/work/build.log')
   const result = await open(r)
   expect(result.text).toBeUndefined()
   expect(await r.buttons()).toEqual(['● build.log'])
@@ -199,6 +235,7 @@ test('keeps the last 300 lines and shows the live header', async ($, on) => {
   await start(r)
   await r.call('make > build.log', true)
   await r.emit('/work/build.log', Array.from({ length: 400 }, (_, i) => `line ${i}`).join('\n') + '\n')
+  await r.live('/work/build.log')
   expect(await r.buttons()).toEqual(['● build.log'])
   expect(await r.header()).toBe('live: build.log')
   const shown = await r.lines()
@@ -220,16 +257,54 @@ test('a foreground call keeps the file live until it resolves', async ($, on) =>
   expect(await r.header()).toBe('ended: build.log')
 })
 
-test('a background call is live only while output arrives', async ($, on) => {
+test('a background call is live only while a process writes to the file', async ($, on) => {
   const r = rig($, on)
   await start(r)
   await r.call('make > build.log', true)
+  expect(await r.buttons()).toEqual(['● build.log'])
+  await r.clock.advance(5_000)
+  expect(await r.buttons()).toEqual(['○ build.log'])
+  await r.live('/work/build.log')
+  expect(await r.buttons()).toEqual(['● build.log'])
+  await r.clock.advance(60_000)
+  expect(await r.buttons()).toEqual(['● build.log'])
+  await r.end('/work/build.log')
+  expect(await r.buttons()).toEqual(['○ build.log'])
+})
+
+test('output without a writer keeps a file live only for a short grace', async ($, on) => {
+  const r = rig($, on)
+  await start(r)
+  await r.call('make > build.log', true)
+  await r.clock.advance(5_000)
+  await r.emit('/work/build.log', 'hi\n')
+  expect(await r.buttons()).toEqual(['● build.log'])
+  await r.clock.advance(5_000)
+  expect(await r.buttons()).toEqual(['○ build.log'])
+})
+
+test('lsof is called once for all tracked files, and not when none are tracked', async ($, on) => {
+  const r = rig($, on)
+  await start(r)
+  await r.clock.advance(4_000)
+  expect(r.probes).toEqual([])
+  await r.call('a > one.log', true)
+  await r.call('a > two.log', true)
+  r.probes.length = 0
+  await r.clock.advance(2_000)
+  expect(r.probes).toEqual([['/work/one.log', '/work/two.log']])
+})
+
+test('without lsof, recent output stands in for the process', async ($, on) => {
+  const r = rig($, on)
+  r.noLsof()
+  await start(r)
+  await r.call('make > build.log', true)
+  await r.clock.advance(5_000)
   expect(await r.buttons()).toEqual(['○ build.log'])
   await r.emit('/work/build.log', 'hi\n')
   expect(await r.buttons()).toEqual(['● build.log'])
-  await r.clock.advance(19_000)
-  expect(await r.buttons()).toEqual(['● build.log'])
-  await r.clock.advance(2_000)
+  await r.clock.advance(21_000)
   expect(await r.buttons()).toEqual(['○ build.log'])
 })
 
@@ -263,9 +338,11 @@ test('Esc and ui.close drop ended files and keep live ones', { plugins: [closer]
   await start(r)
   await r.call('a > old.log', true)
   await r.emit('/work/old.log', 'x\n')
-  await r.clock.advance(30_000)
+  await r.live('/work/old.log')
+  await r.end('/work/old.log')
   await r.call('a > fresh.log', true)
   await r.emit('/work/fresh.log', 'y\n')
+  await r.live('/work/fresh.log')
   await esc(r)
   expect(await r.buttons()).toEqual(['● fresh.log'])
 })
@@ -275,11 +352,14 @@ test('/logpane again clears stale files and resets the pin', async ($, on) => {
   await start(r)
   await r.call('a > old.log', true)
   await r.emit('/work/old.log', 'x\n')
-  await r.clock.advance(30_000)
+  await r.live('/work/old.log')
+  await r.end('/work/old.log')
   await r.call('a > live.log', true)
   await r.emit('/work/live.log', 'y\n')
+  await r.live('/work/live.log')
   await r.call('a > newest.log', true)
   await r.emit('/work/newest.log', 'z\n')
+  await r.live('/work/newest.log')
   const ui = await mountPane($)
   await ui.press({ key: (await ui.findAll({ type: 'Button' })).find(b => b.props.hotkey === '2')!.key! } as never)
   await ui.unmount()
@@ -332,6 +412,7 @@ test('shows dir/basename when names collide', async ($, on) => {
   await r.call('a > x/build.log', true)
   await r.call('a > y/build.log', true)
   await r.call('a > other.log', true)
+  await r.clock.advance(5_000)
   expect(await r.buttons()).toEqual(['○ x/build.log', '○ y/build.log', '○ other.log'])
 })
 
@@ -393,8 +474,11 @@ test('the band appears on the first line and shows only file buttons', async ($,
   const r = rig($, on)
   await start(r)
   await r.call('make > build.log', true)
+  await r.clock.advance(5_000)
   expect(await band($)).toEqual({ buttons: [], texts: [] })
   await r.emit('/work/build.log', 'a\nb\nc\n')
+  await r.live('/work/build.log')
+  await r.live('/work/build.log')
   expect(await band($)).toEqual({ buttons: ['1 ● build.log', '✕'], texts: [] })
 })
 
@@ -410,12 +494,13 @@ test('the band shows for a foreground call and stays while it runs', async ($, o
   expect(await band($)).toEqual({ buttons: [], texts: [] })
 })
 
-test('the band hides after the live window and files stay tracked', async ($, on) => {
+test('the band hides when the process exits and files stay tracked', async ($, on) => {
   const r = rig($, on)
   await start(r)
   await r.call('make > build.log', true)
   await r.emit('/work/build.log', 'a\n')
-  await r.clock.advance(21_000)
+  await r.live('/work/build.log')
+  await r.end('/work/build.log')
   expect(await band($)).toEqual({ buttons: [], texts: [] })
   expect(await r.buttons()).toEqual(['○ build.log'])
 })
@@ -425,6 +510,7 @@ test('the band yields to a survey and to a zero-row allowance', async ($, on) =>
   await start(r)
   await r.call('make > build.log', true)
   await r.emit('/work/build.log', 'a\n')
+  await r.live('/work/build.log')
   expect(await band($, { hasSurvey: true })).toEqual({ buttons: [], texts: [] })
   expect(await band($, { maxRows: 0 })).toEqual({ buttons: [], texts: [] })
   expect((await band($, { maxRows: 1 })).buttons).toEqual(['1 ● build.log', '✕'])
@@ -435,9 +521,11 @@ test('band buttons mark live and ended and carry the 1 to 8 hotkeys', async ($, 
   await start(r)
   await r.call('a > one.log', true)
   await r.emit('/work/one.log', 'first\n')
-  await r.clock.advance(30_000)
+  await r.live('/work/one.log')
+  await r.end('/work/one.log')
   await r.call('a > two.log', true)
   await r.emit('/work/two.log', 'second\n')
+  await r.live('/work/two.log')
   expect((await band($)).buttons).toEqual(['1 ○ one.log', '2 ● two.log', '✕'])
   const ui = await mountBand($)
   const hotkeys = (await ui.findAll({ type: 'Button' })).map(b => b.props.hotkey).filter(Boolean)
@@ -451,7 +539,7 @@ test('band shows dir/basename when names collide', async ($, on) => {
   await r.call('a > x/build.log', true)
   await r.call('a > y/build.log', true)
   const held = r.hold('a > other.log')
-  await r.clock.advance(0)
+  await r.clock.advance(5_000)
   expect((await band($)).buttons).toEqual(['1 ○ x/build.log', '2 ○ y/build.log', '3 ● other.log', '✕'])
   held.release()
   await held.done
@@ -462,8 +550,10 @@ test('pressing a band file opens the pane at normal size on that file and hides 
   await start(r)
   await r.call('a > one.log', true)
   await r.emit('/work/one.log', 'first\n')
+  await r.live('/work/one.log')
   await r.call('a > two.log', true)
   await r.emit('/work/two.log', 'second\n')
+  await r.live('/work/two.log')
   await pressBand($, byLabel('1 ● one.log'))
   expect(r.opens.at(-1)).toMatchObject({ id: 'logpane', focus: true, closeOnEscape: true })
   expect(r.opens.at(-1)?.rows).toBeUndefined()
@@ -476,6 +566,7 @@ test('/logpane hides the band', async ($, on) => {
   await start(r)
   await r.call('make > build.log', true)
   await r.emit('/work/build.log', 'a\n')
+  await r.live('/work/build.log')
   await open(r)
   expect(await band($)).toEqual({ buttons: [], texts: [] })
 })
@@ -485,6 +576,7 @@ test('closing the pane returns to the band when a file is live', { plugins: [clo
   await start(r)
   await r.call('make > build.log', true)
   await r.emit('/work/build.log', 'a\n')
+  await r.live('/work/build.log')
   await open(r)
   await esc(r)
   expect((await band($)).buttons).toEqual(['1 ● build.log', '✕'])
@@ -495,8 +587,9 @@ test('closing the pane with no live file shows no band', { plugins: [closer] }, 
   await start(r)
   await r.call('make > build.log', true)
   await r.emit('/work/build.log', 'a\n')
+  await r.live('/work/build.log')
   await open(r)
-  await r.clock.advance(30_000)
+  await r.end('/work/build.log')
   await esc(r)
   expect(await band($)).toEqual({ buttons: [], texts: [] })
 })
@@ -506,6 +599,7 @@ test('pressing a band file keeps the band when the pane cannot be placed', async
   await start(r)
   await r.call('make > build.log', true)
   await r.emit('/work/build.log', 'a\n')
+  await r.live('/work/build.log')
   r.setPlaced(false)
   await pressBand($, byLabel('1 ● build.log'))
   expect((await band($)).buttons).toEqual(['1 ● build.log', '✕'])
@@ -516,13 +610,16 @@ test('dismiss hides the band until a file goes from ended to live', async ($, on
   await start(r)
   await r.call('a > one.log', true)
   await r.emit('/work/one.log', 'x\n')
+  await r.live('/work/one.log')
   await pressBand($, byLabel('✕'))
   expect(await band($)).toEqual({ buttons: [], texts: [] })
   await r.emit('/work/one.log', 'y\n')
+  await r.live('/work/one.log')
   expect(await band($)).toEqual({ buttons: [], texts: [] })
   expect(await r.buttons()).toEqual(['● one.log'])
-  await r.clock.advance(30_000)
+  await r.end('/work/one.log')
   await r.emit('/work/one.log', 'z\n')
+  await r.live('/work/one.log')
   expect((await band($)).buttons).toEqual(['1 ● one.log', '✕'])
 })
 
@@ -531,9 +628,11 @@ test('dismiss: a new Bash call that attaches a file brings the band back', async
   await start(r)
   await r.call('a > one.log', true)
   await r.emit('/work/one.log', 'x\n')
+  await r.live('/work/one.log')
   await pressBand($, byLabel('✕'))
   await r.call('a > two.log', true)
   await r.emit('/work/two.log', 'w\n')
+  await r.live('/work/two.log')
   expect((await band($)).buttons).toEqual(['1 ● one.log', '2 ● two.log', '✕'])
 })
 

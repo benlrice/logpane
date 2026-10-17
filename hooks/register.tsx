@@ -10,6 +10,7 @@ const KEEP_LINES = 300
 const INITIAL_LINES = 200
 const LIVE_MS = 20_000
 const TICK_MS = 2_000
+const GRACE_MS = 2 * TICK_MS
 
 const files = atom({ plugin: 'logpane', key: 'files' } as const, [])
 const picked = atom({ plugin: 'logpane', key: 'picked' } as const, null)
@@ -27,8 +28,16 @@ const SIZES = {
 } as const
 type Size = keyof typeof SIZES
 
+// A file is live while a process has it open for writing. Without lsof the
+// process is unknown, so recent output stands in for it.
+// Output and a fresh attach count for a short grace, so a writer that
+// reopens the file per line, or one that has not opened it yet, is not missed
+// between probes.
 const isLive = (file: Tracked, now: number) =>
-  file.foreground > 0 || now - file.lastWriteAt < LIVE_MS
+  file.foreground > 0 ||
+  file.isWritten === true ||
+  now - file.lastWriteAt < (file.isWritten === null ? LIVE_MS : GRACE_MS) ||
+  now - file.attachedAt < GRACE_MS
 
 type Env = Engine
 
@@ -41,6 +50,49 @@ const shownIndex = (list: Tracked[], pin: string | null, top: string | null) => 
 let isTicking = false
 const tails = new Map<string, { return: (value: never) => unknown }>()
 const partial = new Map<string, string>()
+
+// Paths from `paths` that a process has open for writing, or null when lsof
+// cannot run. lsof exits 1 with no output when nothing has the paths open.
+async function probeWriters($: Env, paths: string[]): Promise<Set<string> | null> {
+  const writers = new Set<string>()
+  let out = ''
+  try {
+    for await (const { stream, text } of $.process.spawn({ argv: ['lsof', '-Fan', '--', ...paths] })) {
+      if (stream === 'stdout') out += text
+    }
+  } catch (error) {
+    if (/ENOENT|EACCES|not found/i.test(String(error))) return null
+  }
+
+  let access = ''
+  for (const line of out.split('\n')) {
+    if (line.startsWith('f')) access = ''
+    else if (line.startsWith('a')) access = line.slice(1)
+    else if (line.startsWith('n') && (access === 'w' || access === 'u')) writers.add(line.slice(1))
+  }
+
+  return writers
+}
+
+let isRefreshing = false
+
+async function refresh($: Env) {
+  if (isRefreshing) return
+  isRefreshing = true
+  try {
+    const before = await read($, files)
+    if (before.length === 0) return
+    const writers = await probeWriters($, before.map(file => file.path))
+    const now = await $.clock.now()
+    const isWritten = (file: Tracked) => (writers ? writers.has(file.path) : null)
+    const wentLive = before.some(file => !isLive(file, now) && isLive({ ...file, isWritten: isWritten(file) }, now))
+
+    await update($, files, list => list.map(file => ({ ...file, isWritten: isWritten(file) })))
+    if (wentLive) await update($, dismissed, () => false)
+  } finally {
+    isRefreshing = false
+  }
+}
 
 function stopTail(path: string) {
   void tails.get(path)?.return(undefined as never)
@@ -99,7 +151,7 @@ async function attach($: Env, paths: string[], isForeground: boolean) {
               ? { ...file, attachedAt: now, foreground: file.foreground + (isForeground ? 1 : 0) }
               : file,
           )
-        : [...next, { path, lines: [], foreground: isForeground ? 1 : 0, lastWriteAt: 0, attachedAt: now }]
+        : [...next, { path, lines: [], foreground: isForeground ? 1 : 0, lastWriteAt: 0, attachedAt: now, isWritten: null }]
     }
     while (next.length > MAX_FILES) {
       const oldest = next.reduce((a, b) => (b.attachedAt < a.attachedAt ? b : a))
@@ -155,7 +207,10 @@ export const register: Register = on => {
     })
     if (!isTicking) {
       isTicking = true
-      $.clock.every(TICK_MS, () => void update($, tick, n => n + 1))
+      $.clock.every(TICK_MS, () => {
+        void update($, tick, n => n + 1)
+        refresh($).catch(() => {})
+      })
     }
 
     return next(e)
