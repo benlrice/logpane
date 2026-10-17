@@ -9,6 +9,8 @@ export type Tracked = {
   lastWriteAt: number
   /** When a command last routed output to the file, in ms. */
   attachedAt: number
+  /** Whether a process has the file open for writing; null when that cannot be checked. */
+  isWritten: boolean | null
 }
 
 declare module 'claude-code' {

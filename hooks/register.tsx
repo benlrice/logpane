@@ -27,8 +27,10 @@ const SIZES = {
 } as const
 type Size = keyof typeof SIZES
 
+// A file is live while a process has it open for writing. Without lsof the
+// process is unknown, so recent output stands in for it.
 const isLive = (file: Tracked, now: number) =>
-  file.foreground > 0 || now - file.lastWriteAt < LIVE_MS
+  file.foreground > 0 || (file.isWritten ?? now - file.lastWriteAt < LIVE_MS)
 
 type Env = Engine
 
@@ -41,6 +43,34 @@ const shownIndex = (list: Tracked[], pin: string | null, top: string | null) => 
 let isTicking = false
 const tails = new Map<string, { return: (value: never) => unknown }>()
 const partial = new Map<string, string>()
+
+async function probeWriter($: Env, path: string): Promise<boolean | null> {
+  try {
+    let out = ''
+    for await (const { stream, text } of $.process.spawn({ argv: ['lsof', '-Fa', '--', path] })) {
+      if (stream === 'stdout') out += text
+    }
+
+    return /^a[wu]/m.test(out)
+  } catch {
+    return null
+  }
+}
+
+async function refresh($: Env) {
+  const paths = (await read($, files)).map(file => file.path)
+  const found = new Map<string, boolean | null>()
+  await Promise.all(paths.map(async path => void found.set(path, await probeWriter($, path))))
+  const now = await $.clock.now()
+  let wentLive = false
+
+  await update($, files, list => {
+    wentLive = list.some(file => found.has(file.path) && found.get(file.path) === true && !isLive(file, now))
+
+    return list.map(file => (found.has(file.path) ? { ...file, isWritten: found.get(file.path)! } : file))
+  })
+  if (wentLive) await update($, dismissed, () => false)
+}
 
 function stopTail(path: string) {
   void tails.get(path)?.return(undefined as never)
@@ -99,7 +129,7 @@ async function attach($: Env, paths: string[], isForeground: boolean) {
               ? { ...file, attachedAt: now, foreground: file.foreground + (isForeground ? 1 : 0) }
               : file,
           )
-        : [...next, { path, lines: [], foreground: isForeground ? 1 : 0, lastWriteAt: 0, attachedAt: now }]
+        : [...next, { path, lines: [], foreground: isForeground ? 1 : 0, lastWriteAt: 0, attachedAt: now, isWritten: null }]
     }
     while (next.length > MAX_FILES) {
       const oldest = next.reduce((a, b) => (b.attachedAt < a.attachedAt ? b : a))
@@ -115,6 +145,7 @@ async function attach($: Env, paths: string[], isForeground: boolean) {
   await update($, newest, () => paths[paths.length - 1] ?? null)
   await update($, dismissed, () => false)
   for (const path of paths) if (!evicted.includes(path)) startTail($, path)
+  await refresh($)
 }
 
 function detach($: Env, paths: string[]) {
@@ -155,7 +186,10 @@ export const register: Register = on => {
     })
     if (!isTicking) {
       isTicking = true
-      $.clock.every(TICK_MS, () => void update($, tick, n => n + 1))
+      $.clock.every(TICK_MS, () => {
+        void update($, tick, n => n + 1)
+        void refresh($)
+      })
     }
 
     return next(e)

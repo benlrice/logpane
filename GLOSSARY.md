@@ -9,7 +9,7 @@ A file that a Bash call redirects output to, and that logpane tails.
 _Avoid_: log, watched file
 
 **Live**:
-A tracked file that a foreground Bash call is still running against, or that received a new line recently.
+A tracked file that a process has open for writing, or that a foreground Bash call is still running against.
 _Avoid_: active, running
 
 **Ended**:
