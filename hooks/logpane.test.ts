@@ -68,7 +68,13 @@ function rig($: Engine, on: On): Rig {
       probes.push(targets)
       yield {
         stream: 'stdout' as const,
-        text: targets.map(t => `p1\nf1\na${writers.has(t) ? 'w' : 'r'}\nn${t}\n`).join(''),
+        text: targets
+          .map(t => {
+            const name = writers.has(`/private${t}`) ? `/private${t}` : t
+
+            return `p1\nf1\na${writers.has(name) ? 'w' : 'r'}\nn${name}\n`
+          })
+          .join(''),
       }
 
       return { value: { code: 0 } } as never
@@ -281,6 +287,17 @@ test('output without a writer keeps a file live only for a short grace', async (
   expect(await r.buttons()).toEqual(['● build.log'])
   await r.clock.advance(5_000)
   expect(await r.buttons()).toEqual(['○ build.log'])
+})
+
+test('a macOS /private path from lsof matches the tracked /tmp path', async ($, on) => {
+  const r = rig($, on)
+  await start(r)
+  await r.call('make > /tmp/build.log', true)
+  await r.clock.advance(5_000)
+  expect(await r.buttons()).toEqual(['○ build.log'])
+  r.writers.add('/private/tmp/build.log')
+  await r.clock.advance(2_000)
+  expect(await r.buttons()).toEqual(['● build.log'])
 })
 
 test('lsof is called once for all tracked files, and not when none are tracked', async ($, on) => {

@@ -97,7 +97,7 @@ logpane resolves a relative path from the working directory of the session. It u
 - logpane watches 8 files at the same time. When a ninth file arrives, logpane removes the oldest file and stops its tail.
 - logpane starts each file from its last 200 lines. It keeps the last 300 lines.
 - logpane reads only the redirects in the command text. It does not follow these items: files that a program opens by itself, shell variables, globs, `cd` in a compound command, and command substitutions.
-- logpane decides live or ended from the processes that have the file open for writing. This needs `lsof`. Any process counts, not only the command logpane saw. Without `lsof`, a file is live for 20 seconds after its last output.
+- logpane decides live or ended from the processes that have the file open for writing. This needs `lsof`. Any process counts, not only the command logpane saw. On macOS, logpane treats `/private/tmp`, `/private/var` and `/private/etc` as `/tmp`, `/var` and `/etc`. Without `lsof`, a file is live for 20 seconds after its last output.
 - logpane has no scrollback past 300 lines, no search and no filter. It has no automatic open of the pane, no status-line hint and no settings.
 
 ## Development

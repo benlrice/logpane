@@ -51,6 +51,10 @@ let isTicking = false
 const tails = new Map<string, { return: (value: never) => unknown }>()
 const partial = new Map<string, string>()
 
+// macOS reports /tmp, /var and /etc by their real names under /private, so
+// both sides are compared without that prefix.
+const canonical = (path: string) => path.replace(/^\/private(?=\/(?:tmp|var|etc)\/)/, '')
+
 // Paths from `paths` that a process has open for writing, or null when lsof
 // cannot run. lsof exits 1 with no output when nothing has the paths open.
 async function probeWriters($: Env, paths: string[]): Promise<Set<string> | null> {
@@ -68,7 +72,7 @@ async function probeWriters($: Env, paths: string[]): Promise<Set<string> | null
   for (const line of out.split('\n')) {
     if (line.startsWith('f')) access = ''
     else if (line.startsWith('a')) access = line.slice(1)
-    else if (line.startsWith('n') && (access === 'w' || access === 'u')) writers.add(line.slice(1))
+    else if (line.startsWith('n') && (access === 'w' || access === 'u')) writers.add(canonical(line.slice(1)))
   }
 
   return writers
@@ -84,7 +88,7 @@ async function refresh($: Env) {
     if (before.length === 0) return
     const writers = await probeWriters($, before.map(file => file.path))
     const now = await $.clock.now()
-    const isWritten = (file: Tracked) => (writers ? writers.has(file.path) : null)
+    const isWritten = (file: Tracked) => (writers ? writers.has(canonical(file.path)) : null)
     const wentLive = before.some(file => !isLive(file, now) && isLive({ ...file, isWritten: isWritten(file) }, now))
 
     await update($, files, list => list.map(file => ({ ...file, isWritten: isWritten(file) })))
