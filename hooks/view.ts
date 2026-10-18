@@ -3,7 +3,7 @@
 
 import { isLive, type Registry, shownIndex } from './registry'
 
-export type FileView = { path: string; label: string; isLive: boolean; isShown: boolean }
+export type FileView = { path: string; label: string; isLive: boolean; marker: '●' | '○'; isShown: boolean }
 
 // Button text for each path: the file name, with its folder only where names collide.
 export function labelsFor(paths: readonly string[]): string[] {
@@ -21,10 +21,9 @@ export function viewFiles(state: Registry, now: number): FileView[] {
   const labels = labelsFor(state.files.map(file => file.path))
   const shownAt = shownIndex(state)
 
-  return state.files.map((file, i) => ({
-    path: file.path,
-    label: labels[i],
-    isLive: isLive(file, now),
-    isShown: i === shownAt,
-  }))
+  return state.files.map((file, i) => {
+    const live = isLive(file, now)
+
+    return { path: file.path, label: labels[i], isLive: live, marker: live ? '●' : '○', isShown: i === shownAt }
+  })
 }

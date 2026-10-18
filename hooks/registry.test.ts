@@ -156,6 +156,14 @@ test('Dismiss holds while nothing goes Live, and ends when an Ended file goes Li
   expect(output(ended, t, '/a.log', ['x']).state.dismissed).toBe(false)
 })
 
+test('a probe that changes nothing leaves Dismiss set', () => {
+  const t = T0 + 100_000
+  const ended = dismiss(attach(empty, T0, ['/a.log'], false).state)
+  const first = probed(ended, t, new Set()).state
+  expect(probed(first, t, new Set()).state.dismissed).toBe(true)
+  expect(probed(first, t, null).state.dismissed).toBe(true)
+})
+
 test('output to a file that is already Live does not end Dismiss', () => {
   const live = dismiss(attach(empty, T0, ['/a.log'], true).state)
   expect(output(live, T0 + 10, '/a.log', ['x']).state.dismissed).toBe(true)
