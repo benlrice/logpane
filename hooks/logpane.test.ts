@@ -761,6 +761,22 @@ test('a band file press that cannot place the pane keeps the earlier selection',
   expect(await r.header()).toBe('live: two.log')
 })
 
+test('/logpane that cannot place the pane keeps the earlier selection', async ($, on) => {
+  const r = rig($, on)
+  await start(r)
+  await r.call('a > one.log', true)
+  await r.call('a > two.log', true)
+  await r.live('/work/one.log')
+  await r.live('/work/two.log')
+  const ui = await mountPane($)
+  await ui.press({ key: (await ui.findAll({ type: 'Button' })).find(b => b.props.hotkey === '1')!.key! } as never)
+  await ui.unmount()
+  expect(await r.header()).toBe('live: one.log')
+  r.setPlaced(false)
+  await open(r)
+  expect(await r.header()).toBe('live: one.log')
+})
+
 test('one of two foreground calls to a file ending leaves the other live', async ($, on) => {
   const r = rig($, on)
   await start(r)

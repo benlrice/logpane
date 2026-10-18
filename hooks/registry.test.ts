@@ -12,6 +12,7 @@ import {
   pick,
   probed,
   type Registry,
+  shownIndex,
 } from './registry'
 
 // Plain data and a fake `now`: no processes, no clock, no engine.
@@ -197,4 +198,31 @@ test('operations leave their input untouched, so a retried updater gives the sam
   const second = attach(before, T0 + 10, ['/b.log'], true)
   expect(before).toEqual(snapshot)
   expect(second).toEqual(first)
+})
+
+test('Pick overrides Newest, and null returns to following Newest', () => {
+  const state = attachAll(['/a.log', '/b.log', '/c.log'])
+  expect(shownIndex(state)).toBe(2)
+  const picked = pick(state, '/a.log')
+  expect(picked.picked).toBe('/a.log')
+  expect(shownIndex(picked)).toBe(0)
+  expect(shownIndex(pick(picked, null))).toBe(2)
+})
+
+test('the Shown file is Newest, which need not be the last file attached', () => {
+  const state = attach(attachAll(['/a.log', '/b.log']), T0 + 100, ['/a.log'], false).state
+  expect(shownIndex(state)).toBe(0)
+})
+
+test('the Shown file falls back to the last file when the Pick is not tracked', () => {
+  const state = pick(attachAll(['/a.log', '/b.log', '/c.log']), '/gone.log')
+  expect(shownIndex(state)).toBe(2)
+})
+
+test('Pick and Dismiss change only their own field', () => {
+  const state = attachAll(['/a.log', '/b.log'])
+  expect(pick(state, '/a.log')).toEqual({ ...state, picked: '/a.log' })
+  expect(dismiss(state)).toEqual({ ...state, dismissed: true })
+  expect(state.picked).toBeNull()
+  expect(state.dismissed).toBe(false)
 })

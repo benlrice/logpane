@@ -143,6 +143,18 @@ async function openPane($: Env, extra: { rows?: number; columns?: number } = {})
   return opened
 }
 
+// Opens the Pane at normal size on a Pick (null follows Newest). If the Pane
+// cannot be placed, the earlier Pick comes back.
+async function showPane($: Env, path: string | null) {
+  const previous = (await read($, registry)).picked
+  await update($, registry, state => pick(state, path))
+  await update($, size, () => 'normal')
+  const opened = await openPane($)
+  if (!opened.isPlaced) await update($, registry, state => pick(state, previous))
+
+  return opened
+}
+
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     await $.command.register({
@@ -162,9 +174,7 @@ export const register: Register = on => {
 
   on('command.run', { command: 'logpane' }, async $ => {
     await dropEndedFiles($)
-    await update($, registry, state => pick(state, null))
-    await update($, size, () => 'normal')
-    const opened = await openPane($)
+    const opened = await showPane($, null)
 
     return opened.isPlaced ? {} : { text: `logpane: the pane could not be placed. ${opened.reason}` }
   })
@@ -259,14 +269,6 @@ export const register: Register = on => {
 
     const { Box, Button } = $.ui.resolve(e)
     const labels = labelsFor(list.map(file => file.path))
-    const show = async (path: string) => {
-      const previous = (await read($, registry)).picked
-      await update($, registry, current => pick(current, path))
-      await update($, size, () => 'normal')
-      const opened = await openPane($)
-      if (!opened.isPlaced) await update($, registry, current => pick(current, previous))
-    }
-
     return (
       <Box justifyContent="space-between">
         <Box flexWrap="wrap" columnGap={1}>
@@ -275,7 +277,7 @@ export const register: Register = on => {
               key={file.path}
               hotkey={String(i + 1)}
               label={`${i + 1} ${isLive(file, now) ? '●' : '○'} ${labels[i]}`}
-              onPress={() => show(file.path)}
+              onPress={() => showPane($, file.path)}
             />
           ))}
         </Box>
