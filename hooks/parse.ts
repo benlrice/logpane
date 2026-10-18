@@ -3,6 +3,7 @@
 
 const IGNORED =
   /^\/(dev\/(null|zero|full|stdin|stdout|stderr|tty\d*|fd\/.*|pts\/.*)|proc\/.*)$/
+const LOG_NAME = /(^|\/)[^/]+\.log$/i
 const UNSAFE = /[$`*?\\{]/
 const KEYWORDS = new Set(['{', '!', 'if', 'then', 'else', 'elif', 'do', 'while', 'until', 'time'])
 const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/
@@ -21,7 +22,8 @@ export function extractTargets(command: string): string[] {
 
   const add = (text: string) => {
     const isUnsafe = text === '' || UNSAFE.test(text) || text.startsWith('~')
-    if (!isUnsafe && !IGNORED.test(text) && !found.includes(text)) found.push(text)
+    const isTracked = LOG_NAME.test(text)
+    if (!isUnsafe && isTracked && !IGNORED.test(text) && !found.includes(text)) found.push(text)
   }
 
   const endWord = () => {

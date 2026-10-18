@@ -79,10 +79,11 @@ When you close the pane, logpane removes the ended files. The live files stay.
 | `cmd > out.log`, `cmd >> out.log` | `out.log` |
 | `cmd \| tee out.log`, `cmd \| tee -a out.log` | `out.log` |
 | `cmd > a.log 2> b.log` | `a.log`, `b.log` |
-| `&> f`, `&>> f`, `1> f`, `>\| f` | `f` |
-| `tee [-a -i -p] f1 f2 ...` | Each file operand |
+| `&> f.log`, `&>> f.log`, `1> f.log`, `>\| f.log` | `f.log` |
+| `tee [-a -i -p] f1.log f2.log ...` | Each file operand that ends in `.log` |
 | `> "my build.log"`, `> 'a b.log'` | The quoted path |
 | `a && b > x.log; c \| tee y.log` | `x.log`, `y.log` |
+| `cmd > out.json`, `cmd \| tee notes.md`, `cmd > .log` | None (the name must end in `.log`) |
 | `2>&1` and other fd duplications | None |
 | `/dev/null`, `/dev/stdout`, `/dev/stderr`, `/dev/tty`, `/proc/*` | None |
 | A path with `$VAR`, `~`, a backtick, `*` or `?` | None (logpane cannot expand the path) |
@@ -94,6 +95,7 @@ logpane resolves a relative path from the working directory of the session. It u
 
 ## Limits
 
+- logpane watches only files with a name that ends in `.log`, in upper or lower case. It does not watch `build.log.1`, `app.log.gz` or a file that is named only `.log`. To watch other output, send it to a `.log` file.
 - logpane watches 8 files at the same time. When a ninth file arrives, logpane removes the oldest file and stops its tail.
 - logpane starts each file from its last 200 lines. It keeps the last 300 lines.
 - logpane reads only the redirects in the command text. It does not follow these items: files that a program opens by itself, shell variables, globs, `cd` in a compound command, and command substitutions.

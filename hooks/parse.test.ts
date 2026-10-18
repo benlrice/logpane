@@ -21,6 +21,20 @@ test('handles the other redirect spellings and quoted paths', () => {
   expect(extractTargets('cmd > a.log 2>&1')).toEqual(['a.log'])
 })
 
+test('tracks only names that end in .log with a stem', () => {
+  expect(extractTargets('cmd > out.json')).toEqual([])
+  expect(extractTargets('cmd >> .gitignore')).toEqual([])
+  expect(extractTargets('cmd | tee notes.md')).toEqual([])
+  expect(extractTargets('cmd > a.log 2> errors.txt')).toEqual(['a.log'])
+  expect(extractTargets('cmd > BUILD.LOG')).toEqual(['BUILD.LOG'])
+  expect(extractTargets('cmd > logs/run.log')).toEqual(['logs/run.log'])
+  expect(extractTargets('cmd > out.Log')).toEqual(['out.Log'])
+  expect(extractTargets('cmd | tee -- a.log b.txt')).toEqual(['a.log'])
+  expect(extractTargets('cmd > "my notes.txt"')).toEqual([])
+  expect(extractTargets('cmd > build.log.1 2> app.log.gz')).toEqual([])
+  expect(extractTargets('cmd > .log 2> logs/.log')).toEqual([])
+})
+
 test('skips what a shell would have to expand', () => {
   expect(extractTargets('cmd > $LOG')).toEqual([])
   expect(extractTargets('cmd > ~/x.log')).toEqual([])
