@@ -160,6 +160,22 @@ test('output to a file that is already Live does not end Dismiss', () => {
   expect(output(live, T0 + 10, '/a.log', ['x']).state.dismissed).toBe(true)
 })
 
+test('output marks an Ended file Live', () => {
+  const t = T0 + 100_000
+  const ended = attach(empty, T0, ['/a.log'], false).state
+  expect(isLive(file(ended, '/a.log'), t)).toBe(false)
+  expect(isLive(file(output(ended, t, '/a.log', ['x']).state, '/a.log'), t)).toBe(true)
+})
+
+test('with lsof, a writer keeps a file Live and output adds only the short grace', () => {
+  const t = T0 + 100_000
+  const written = output(attach(empty, T0, ['/a.log'], false).state, t, '/a.log', ['x']).state
+  const noWriter = probed(written, t, new Set()).state
+  const writer = probed(written, t, new Set(['/a.log'])).state
+  expect(isLive(file(noWriter, '/a.log'), t + GRACE)).toBe(false)
+  expect(isLive(file(writer, '/a.log'), t + GRACE)).toBe(true)
+})
+
 test('detach and dropEnded never end Dismiss', () => {
   const live = dismiss(attach(empty, T0, ['/a.log'], true).state)
   expect(detach(live, T0 + 10, ['/a.log']).state.dismissed).toBe(true)
