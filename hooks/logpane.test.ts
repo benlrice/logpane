@@ -230,6 +230,15 @@ for (const [command, expected] of table) {
   })
 }
 
+for (const command of ['make > /proc/self/fd/1.log', 'make > /dev/build.log', 'make > ../dev/x.log']) {
+  test(`the policy leaves ${JSON.stringify(command)} untracked`, async ($, on) => {
+    const r = rig($, on)
+    await start(r)
+    await r.call(command)
+    expect(r.spawned).toEqual([])
+  })
+}
+
 test('tails the last 200 lines with -F', async ($, on) => {
   const r = rig($, on)
   await start(r)
@@ -752,6 +761,22 @@ test('a band file press that cannot place the pane keeps the earlier selection',
   expect(await r.header()).toBe('live: two.log')
 })
 
+test('/logpane that cannot place the pane keeps the earlier selection', async ($, on) => {
+  const r = rig($, on)
+  await start(r)
+  await r.call('a > one.log', true)
+  await r.call('a > two.log', true)
+  await r.live('/work/one.log')
+  await r.live('/work/two.log')
+  const ui = await mountPane($)
+  await ui.press({ key: (await ui.findAll({ type: 'Button' })).find(b => b.props.hotkey === '1')!.key! } as never)
+  await ui.unmount()
+  expect(await r.header()).toBe('live: one.log')
+  r.setPlaced(false)
+  await open(r)
+  expect(await r.header()).toBe('live: one.log')
+})
+
 test('one of two foreground calls to a file ending leaves the other live', async ($, on) => {
   const r = rig($, on)
   await start(r)
@@ -765,4 +790,39 @@ test('one of two foreground calls to a file ending leaves the other live', async
   expect(await r.buttons()).toEqual(['● build.log'])
   second.release()
   await second.done
+})
+
+test('a retried attach stops the tail only of files evicted by the final run', async ($, on) => {
+  // Another write lands between the attach's read and its write, so the
+  // updater runs twice: f1 is the oldest the first time, f2 the second.
+  let raced = false
+  let armed = false
+  on('state.set', { plugin: 'logpane', key: 'registry' } as never, async (_$, e, next) => {
+    if (!armed || raced) return next(e)
+    raced = true
+    // Land the other write in place of this one and report this one as beaten.
+    const { files: list, ...rest } = (e as never as { previous: { files: { path: string; attachedAt: number }[] } }).previous
+    const landed = await next({
+      ...e,
+      value: { ...rest, files: list.map(f => (f.path === '/work/f1.log' ? { ...f, attachedAt: f.attachedAt + 1_000_000 } : f)) },
+    } as never)
+
+    return { value: { ...(landed as never as { value: object }).value, isSet: false } } as never
+  })
+  const r = rig($, on)
+  await start(r)
+  for (let i = 1; i <= 8; i++) {
+    await r.call(`a > f${i}.log`, true)
+    await r.clock.advance(10)
+  }
+  armed = true
+  await r.call('a > f9.log', true)
+  expect(raced).toBe(true)
+  const ui = await mountPane($)
+  const f1 = (await ui.findAll({ type: 'Button' })).find(b => String(b.props.label).includes('f1.log'))
+  expect(f1).toBeDefined()
+  await ui.press({ key: f1!.key! } as never)
+  await ui.unmount()
+  await r.emit('/work/f1.log', 'still tailed\n')
+  expect(await r.lines()).toContain('still tailed')
 })

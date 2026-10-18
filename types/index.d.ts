@@ -1,3 +1,5 @@
+import type { Registry } from '../hooks/registry'
+
 export type Tracked = {
   /** Absolute path, as the Bash command routed output to it. */
   path: string
@@ -16,18 +18,13 @@ export type Tracked = {
 declare module 'claude-code' {
   interface PluginState {
     logpane: {
-      files: Tracked[]
-      /** The path the person pinned, or null to follow the newest. */
-      picked: string | null
-      /** The path of the most recent command's target. */
-      newest: string | null
-      /** Bumped on a timer so the live and ended markers redraw. */
+      /** The Tracked files, Pick, Newest and the Dismiss flag, written together. */
+      registry: Registry
+      /** Bumped on a timer so the Live and Ended markers redraw. */
       tick: number
-      /** The pane's size: the default, or maximized. */
+      /** The Pane's size: the default, or maximized. */
       size: 'normal' | 'max'
-      /** True after the person hides the band, until a file goes live again. */
-      dismissed: boolean
-      /** True while the pane is open; the band hides then. */
+      /** True while the Pane is open; the Band hides then. */
       paneOpen: boolean
     }
   }

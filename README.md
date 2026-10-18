@@ -85,7 +85,7 @@ When you close the pane, logpane removes the ended files. The live files stay.
 | `a && b > x.log; c \| tee y.log` | `x.log`, `y.log` |
 | `cmd > out.json`, `cmd \| tee notes.md`, `cmd > .log` | None (the name must end in `.log`) |
 | `2>&1` and other fd duplications | None |
-| `/dev/null`, `/dev/stdout`, `/dev/stderr`, `/dev/tty`, `/proc/*` | None |
+| `/dev/null`, `/dev/stdout`, any other path under `/dev` or `/proc` | None |
 | A path with `$VAR`, `~`, a backtick, `*` or `?` | None (logpane cannot expand the path) |
 | A redirect in `$(...)`, in backticks or in a heredoc body | None |
 

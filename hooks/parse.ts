@@ -1,9 +1,6 @@
-// Finds the files a shell command line routes output to. No shell runs here:
+// Finds the files a shell command line redirects or tees output to. No shell runs here:
 // anything that needs expansion is skipped rather than guessed.
 
-const IGNORED =
-  /^\/(dev\/(null|zero|full|stdin|stdout|stderr|tty\d*|fd\/.*|pts\/.*)|proc\/.*)$/
-const LOG_NAME = /(^|\/)[^/]+\.log$/i
 const UNSAFE = /[$`*?\\{]/
 const KEYWORDS = new Set(['{', '!', 'if', 'then', 'else', 'elif', 'do', 'while', 'until', 'time'])
 const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/
@@ -22,8 +19,7 @@ export function extractTargets(command: string): string[] {
 
   const add = (text: string) => {
     const isUnsafe = text === '' || UNSAFE.test(text) || text.startsWith('~')
-    const isTracked = LOG_NAME.test(text)
-    if (!isUnsafe && isTracked && !IGNORED.test(text) && !found.includes(text)) found.push(text)
+    if (!isUnsafe && !found.includes(text)) found.push(text)
   }
 
   const endWord = () => {
@@ -228,16 +224,4 @@ export function cleanLine(line: string): string {
     .replace(/\x1b\][^\x07]*\x07/g, '')
     .split('\r')
     .pop()!
-}
-
-// Button text for each path: the file name, with its folder only where names collide.
-export function labelsFor(paths: readonly string[]): string[] {
-  const names = paths.map(path => path.split('/').pop() ?? path)
-
-  return paths.map((path, i) => {
-    if (names.filter(name => name === names[i]).length < 2) return names[i]
-    const parent = path.split('/').slice(-2, -1)[0]
-
-    return parent ? `${parent}/${names[i]}` : names[i]
-  })
 }
