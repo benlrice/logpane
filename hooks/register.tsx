@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { Engine, Register } from 'claude-code'
 
-import { cleanLine, extractTargets, labelsFor, resolvePath } from './parse'
+import { cleanLine, extractTargets, resolvePath } from './parse'
 import {
   attach,
   detach,
@@ -9,7 +9,6 @@ import {
   dropEnded,
   empty,
   isBandWanted,
-  isLive,
   output,
   pick,
   probed,
@@ -19,6 +18,7 @@ import {
   type Result,
 } from './registry'
 import { isTrackedFile } from './tracked'
+import { viewFiles } from './view'
 
 const PANE = 'logpane'
 const INITIAL_LINES = 200
@@ -221,10 +221,9 @@ export const register: Register = on => {
       return <Text dimColor>No files tracked yet. Run a Bash command that redirects to a file, such as `make > build.log`.</Text>
     }
 
-    const labels = labelsFor(list.map(file => file.path))
-    const shownAt = shownIndex(state)
-    const shown = list[shownAt]
-    const shownLabel = labels[shownAt]
+    const views = viewFiles(state, now)
+    const shown = list[shownIndex(state)]
+    const shownView = views.find(view => view.isShown)!
     const resize = async (target: Size) => {
       const next: Size = level === target ? 'normal' : target
       await update($, size, () => next)
@@ -238,18 +237,18 @@ export const register: Register = on => {
           <Button hotkey="m" label={level === 'max' ? '❐' : '□'} onPress={() => resize('max')} />
         </Box>
         <Box flexWrap="wrap" columnGap={1}>
-          {list.map((file, i) => (
+          {views.map((view, i) => (
             <Button
-              key={file.path}
+              key={view.path}
               hotkey={String(i + 1)}
-              variant={file === shown ? 'primary' : undefined}
-              label={`${isLive(file, now) ? '●' : '○'} ${labels[i]}`}
-              onPress={() => update($, registry, current => pick(current, file.path))}
+              variant={view.isShown ? 'primary' : undefined}
+              label={`${view.isLive ? '●' : '○'} ${view.label}`}
+              onPress={() => update($, registry, current => pick(current, view.path))}
             />
           ))}
         </Box>
         <Text dimColor>
-          {isLive(shown, now) ? 'live' : 'ended'}: {shownLabel}
+          {shownView.isLive ? 'live' : 'ended'}: {shownView.label}
         </Text>
         {shown.lines.slice(-room).map((line, i) => (
           <Text key={i} wrap="truncate-end">{line}</Text>
@@ -260,7 +259,6 @@ export const register: Register = on => {
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     const state = await read($, registry)
-    const list = state.files
     const isOpen = await read($, paneOpen)
     await read($, tick)
     const now = await $.clock.now()
@@ -268,16 +266,16 @@ export const register: Register = on => {
     if (e.props.hasSurvey || isOpen || e.props.maxRows < 1 || !isBandWanted(state, now)) return next(e)
 
     const { Box, Button } = $.ui.resolve(e)
-    const labels = labelsFor(list.map(file => file.path))
+    const views = viewFiles(state, now)
     return (
       <Box justifyContent="space-between">
         <Box flexWrap="wrap" columnGap={1}>
-          {list.map((file, i) => (
+          {views.map((view, i) => (
             <Button
-              key={file.path}
+              key={view.path}
               hotkey={String(i + 1)}
-              label={`${i + 1} ${isLive(file, now) ? '●' : '○'} ${labels[i]}`}
-              onPress={() => showPane($, file.path)}
+              label={`${i + 1} ${view.isLive ? '●' : '○'} ${view.label}`}
+              onPress={() => showPane($, view.path)}
             />
           ))}
         </Box>

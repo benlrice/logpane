@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { cleanLine, extractTargets, labelsFor, resolvePath } from './parse'
+import { cleanLine, extractTargets, resolvePath } from './parse'
 
 test('tracks the redirects and tee forms from the table', () => {
   expect(extractTargets('cmd > out.log')).toEqual(['out.log'])
@@ -58,13 +58,8 @@ test('resolves paths against the working directory', () => {
   expect(resolvePath('/home/a', '/tmp/out.log')).toBe('/tmp/out.log')
 })
 
-test('cleans terminal output and labels collisions', () => {
+test('cleans terminal output', () => {
   expect(cleanLine('\x1b[32mok\x1b[0m')).toBe('ok')
   expect(cleanLine('ok\r')).toBe('ok')
   expect(cleanLine('10%\r50%\r100%')).toBe('100%')
-  expect(labelsFor(['/a/x/build.log', '/a/y/build.log', '/a/tests.log'])).toEqual([
-    'x/build.log',
-    'y/build.log',
-    'tests.log',
-  ])
 })
