@@ -225,15 +225,3 @@ export function cleanLine(line: string): string {
     .split('\r')
     .pop()!
 }
-
-// Button text for each path: the file name, with its folder only where names collide.
-export function labelsFor(paths: readonly string[]): string[] {
-  const names = paths.map(path => path.split('/').pop() ?? path)
-
-  return paths.map((path, i) => {
-    if (names.filter(name => name === names[i]).length < 2) return names[i]
-    const parent = path.split('/').slice(-2, -1)[0]
-
-    return parent ? `${parent}/${names[i]}` : names[i]
-  })
-}
