@@ -230,6 +230,15 @@ for (const [command, expected] of table) {
   })
 }
 
+for (const command of ['make > /proc/self/fd/1.log', 'make > /dev/build.log', 'make > ../dev/x.log']) {
+  test(`the policy leaves ${JSON.stringify(command)} untracked`, async ($, on) => {
+    const r = rig($, on)
+    await start(r)
+    await r.call(command)
+    expect(r.spawned).toEqual([])
+  })
+}
+
 test('tails the last 200 lines with -F', async ($, on) => {
   const r = rig($, on)
   await start(r)
