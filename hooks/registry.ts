@@ -8,6 +8,7 @@ import type { Tracked } from '../types'
 export const MAX_FILES = 8
 export const KEEP_LINES = 300
 const LIVE_MS = 20_000
+// Two ticks of the refresh interval (TICK_MS in register.tsx); change them together.
 const GRACE_MS = 4_000
 
 export type Registry = {
@@ -16,7 +17,7 @@ export type Registry = {
   picked: string | null
   /** The last target of the most recent Bash call that redirected to a Tracked file. */
   newest: string | null
-  /** True after the person Dismisses the Band, until a file goes Live again or a Bash call attaches. */
+  /** True after the person Dismisses the Band, until a Tracked file goes Live again or a Bash call attaches. */
   dismissed: boolean
 }
 
@@ -29,7 +30,7 @@ export const empty: Registry = { files: [], picked: null, newest: null, dismisse
 
 const none: Effects = { start: [], stop: [] }
 
-// A file is Live while a process has it open for writing. Without lsof the
+// A Tracked file is Live while a process has it open for writing. Without lsof the
 // process is unknown, so recent output stands in for it. Output and a fresh
 // attach count for a short grace, so a writer that reopens the file per line,
 // or one that has not opened it yet, is not missed between probes.
@@ -43,7 +44,7 @@ export const isLive = (file: Tracked, now: number) =>
 export const isBandWanted = (state: Registry, now: number) =>
   !state.dismissed && state.files.some(file => isLive(file, now))
 
-/** The index of the Shown file (Pick, else Newest), or the last file when neither is tracked. */
+/** The index of the Shown file (Pick, else Newest), or the last file when neither is a Tracked file. */
 export const shownIndex = (state: Registry) => {
   const found = state.files.findIndex(file => file.path === (state.picked ?? state.newest))
 
@@ -98,7 +99,7 @@ export function output(state: Registry, now: number, path: string, lines: string
   return { state: settle(state, { ...state, files }, now, false), effects: none }
 }
 
-/** The paths with a writer open, or null when lsof could not say. */
+/** Record which paths have a writer open: `writers` is that set, or null when lsof could not say. */
 export function probed(state: Registry, now: number, writers: Set<string> | null): Result {
   const files = state.files.map(file => ({ ...file, isWritten: writers ? writers.has(file.path) : null }))
 

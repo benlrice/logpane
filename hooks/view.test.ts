@@ -31,8 +31,8 @@ test('views each file with its path, label, Live verdict and Shown flag', () => 
   const state = output(attachAll(['/a/x/build.log', '/a/y/build.log']), now, '/a/y/build.log', ['hi']).state
 
   expect(viewFiles(state, now)).toEqual([
-    { path: '/a/x/build.log', label: 'x/build.log', isLive: false, isShown: false },
-    { path: '/a/y/build.log', label: 'y/build.log', isLive: true, isShown: true },
+    { path: '/a/x/build.log', label: 'x/build.log', isLive: false, marker: '○', isShown: false },
+    { path: '/a/y/build.log', label: 'y/build.log', isLive: true, marker: '●', isShown: true },
   ])
 })
 

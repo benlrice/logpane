@@ -12,7 +12,6 @@ import {
   output,
   pick,
   probed,
-  shownIndex,
   type Effects,
   type Registry,
   type Result,
@@ -22,6 +21,7 @@ import { viewFiles } from './view'
 
 const PANE = 'logpane'
 const INITIAL_LINES = 200
+// The Registry's GRACE_MS is two ticks; change them together.
 const TICK_MS = 2_000
 
 const registry = atom({ plugin: 'logpane', key: 'registry' } as const, empty)
@@ -43,7 +43,7 @@ let isTicking = false
 const tails = new Map<string, { return: (value: never) => unknown }>()
 const partial = new Map<string, string>()
 
-// Paths from `paths` that a process has open for writing, or null when lsof
+// Paths from `paths` (Tracked files) that a process has open for writing, or null when lsof
 // cannot run. lsof exits 1 with no output when nothing has the paths open.
 async function probeWriters($: Env, paths: string[]): Promise<Set<string> | null> {
   const writers = new Set<string>()
@@ -124,7 +124,7 @@ function startTail($: Env, path: string) {
         await commit($, state => output(state, now, path, lines))
       }
     } catch {
-      // tail could not start or was killed with the pane's file; nothing to show
+      // tail could not start or was killed with the Tracked file; nothing to show
     } finally {
       if (tails.get(path) === run) tails.delete(path)
     }
@@ -213,16 +213,14 @@ export const register: Register = on => {
     const { Box, Button, Text } = $.ui.resolve(e)
     await read($, tick)
     const state = await read($, registry)
-    const list = state.files
     const level = await read($, size)
     const now = await $.clock.now()
 
-    if (list.length === 0) {
+    if (state.files.length === 0) {
       return <Text dimColor>No files tracked yet. Run a Bash command that redirects to a file, such as `make > build.log`.</Text>
     }
 
     const views = viewFiles(state, now)
-    const shown = list[shownIndex(state)]
     const shownView = views.find(view => view.isShown)!
     const resize = async (target: Size) => {
       const next: Size = level === target ? 'normal' : target
@@ -242,7 +240,7 @@ export const register: Register = on => {
               key={view.path}
               hotkey={String(i + 1)}
               variant={view.isShown ? 'primary' : undefined}
-              label={`${view.isLive ? '●' : '○'} ${view.label}`}
+              label={`${view.marker} ${view.label}`}
               onPress={() => update($, registry, current => pick(current, view.path))}
             />
           ))}
@@ -250,7 +248,7 @@ export const register: Register = on => {
         <Text dimColor>
           {shownView.isLive ? 'live' : 'ended'}: {shownView.label}
         </Text>
-        {shown.lines.slice(-room).map((line, i) => (
+        {state.files.find(file => file.path === shownView.path)!.lines.slice(-room).map((line, i) => (
           <Text key={i} wrap="truncate-end">{line}</Text>
         ))}
       </Box>
@@ -274,7 +272,7 @@ export const register: Register = on => {
             <Button
               key={view.path}
               hotkey={String(i + 1)}
-              label={`${i + 1} ${view.isLive ? '●' : '○'} ${view.label}`}
+              label={`${i + 1} ${view.marker} ${view.label}`}
               onPress={() => showPane($, view.path)}
             />
           ))}
