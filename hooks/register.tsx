@@ -145,6 +145,7 @@ async function attach($: Env, paths: string[], isForeground: boolean) {
   const evicted: string[] = []
 
   await update($, files, list => {
+    evicted.length = 0
     let next = list
     for (const path of paths) {
       const known = next.find(file => file.path === path)
