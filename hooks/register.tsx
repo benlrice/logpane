@@ -3,6 +3,7 @@ import type { Engine, Register } from 'claude-code'
 
 import type { Tracked } from '../types'
 import { cleanLine, extractTargets, labelsFor, resolvePath } from './parse'
+import { isTrackedFile } from './tracked'
 
 const PANE = 'logpane'
 const MAX_FILES = 8
@@ -233,7 +234,8 @@ export const register: Register = on => {
     if (targets.length === 0) return next(e)
 
     const cwd = await $.session.cwd()
-    const paths = [...new Set(targets.map(target => resolvePath(cwd, target)))]
+    const paths = [...new Set(targets.map(target => resolvePath(cwd, target)).filter(isTrackedFile))]
+    if (paths.length === 0) return next(e)
     const isForeground = e.run_in_background !== true
     await attach($, paths, isForeground)
 
