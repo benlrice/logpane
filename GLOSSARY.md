@@ -5,7 +5,7 @@ A mod that shows the files Claude's Bash calls write to, so you can watch long-r
 ## Language
 
 **Tracked file**:
-A file that a Bash call redirects output to, and that logpane tails.
+A `.log` file that a Bash call redirects output to, and that logpane tails.
 _Avoid_: log, watched file
 
 **Live**:

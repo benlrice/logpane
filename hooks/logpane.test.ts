@@ -205,6 +205,20 @@ const table: [string, string[]][] = [
   ['echo `cat > hidden.log`', []],
   ['cat <<EOF\nx > nope.log\nEOF', []],
   ['ls -la', []],
+  ['cat > src/app.ts <<EOF\nx\nEOF', []],
+  ['jq . data.json > out.json', []],
+  ['echo dist >> .gitignore', []],
+  ['git diff > change.patch', []],
+  ['make | tee notes.md', []],
+  ['nohup make > nohup.out', []],
+  ['make > a.log 2> errors.txt', ['/work/a.log']],
+  ['make | tee notes.md test.log', ['/work/test.log']],
+  ['make > BUILD.LOG', ['/work/BUILD.LOG']],
+  ['make > logs/run.log', ['/work/logs/run.log']],
+  ['make > build.log.1', []],
+  ['make > app.log.gz', []],
+  ['make > .log', []],
+  ['make > logs/.log', []],
 ]
 
 for (const [command, expected] of table) {
@@ -397,6 +411,17 @@ test('a command that writes no file does not change which file is followed', asy
   expect(await r.header()).toMatch(/one\.log$/)
   await r.call('ls')
   expect(await r.header()).toMatch(/one\.log$/)
+})
+
+test('a command that writes only non-.log files does not change which file is followed', async ($, on) => {
+  const r = rig($, on)
+  await start(r)
+  await r.call('a > one.log', true)
+  expect(await r.header()).toMatch(/one\.log$/)
+  await r.call('cat > src/app.ts <<EOF\nx\nEOF')
+  await r.call('echo dist >> .gitignore', true)
+  expect(await r.header()).toMatch(/one\.log$/)
+  expect(await r.buttons()).toEqual(['● one.log'])
 })
 
 test('evicts the oldest file at the ninth', async ($, on) => {
