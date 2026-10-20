@@ -11,9 +11,9 @@ const LIVE_MS = 20_000
 // Two ticks of the refresh interval (TICK_MS in register.tsx); change them together.
 const GRACE_MS = 4_000
 
-/** Paths whose tails the adapter must start or stop. */
 export type { Registry }
 
+/** Paths whose tails the adapter must start or stop. */
 export type Effects = { start: string[]; stop: string[] }
 
 export type Result = { state: Registry; effects: Effects }
