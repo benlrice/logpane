@@ -3,7 +3,7 @@
 // or stop; they never spawn, never read a clock, and never mutate their input,
 // so an updater that wraps one is safe to re-run when `update` retries.
 
-import type { Tracked } from '../types'
+import type { Registry, Tracked } from '../types'
 
 export const MAX_FILES = 8
 export const KEEP_LINES = 300
@@ -11,17 +11,9 @@ const LIVE_MS = 20_000
 // Two ticks of the refresh interval (TICK_MS in register.tsx); change them together.
 const GRACE_MS = 4_000
 
-export type Registry = {
-  files: Tracked[]
-  /** The path the person Picked, or null to follow Newest. */
-  picked: string | null
-  /** The last target of the most recent Bash call that redirected to a Tracked file. */
-  newest: string | null
-  /** True after the person Dismisses the Band, until a Tracked file goes Live again or a Bash call attaches. */
-  dismissed: boolean
-}
-
 /** Paths whose tails the adapter must start or stop. */
+export type { Registry }
+
 export type Effects = { start: string[]; stop: string[] }
 
 export type Result = { state: Registry; effects: Effects }
